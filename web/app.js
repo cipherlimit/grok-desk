@@ -280,7 +280,7 @@
         <div class="note ${tc.level === "warn" ? "warn" : ""}" style="padding:8px 0 0">${esc(tc.message || "")}</div></div>
       <div class="list" style="margin-top:16px">
         ${ext(A.profile_url, `<div class="row"><div class="mid"><div class="t">Your FOMO profile</div><div class="s">@${esc(A.fomo_handle)}</div></div><div class="v ter">›</div></div>`)}
-        <button class="row" id="invite" style="width:100%;text-align:left"><div class="mid"><div class="t">Invite a friend</div><div class="s">Share your FOMO invite</div></div><div class="v ter">›</div></button>
+        <button class="row" id="invite" data-url="${esc(A.signup_url)}" style="width:100%;text-align:left"><div class="mid"><div class="t">Invite a friend</div><div class="s">Share your FOMO invite</div></div><div class="v ter">›</div></button>
       </div>
       <div class="group"><h3>Notifications</h3><div class="list">
         <div class="row"><div class="mid"><div class="t">Telegram</div><div class="s">${A.telegram.connected ? "connected · " + esc(A.telegram.bot) : "not connected"}</div></div><div class="v ${A.telegram.connected ? "green" : "red"}">${A.telegram.connected ? "●" : "○"}</div></div>
@@ -291,8 +291,9 @@
       ${order.filter(g => ST.groups[g]).map(g => `<div class="group" id="grp-${g}"><h3>${g[0].toUpperCase() + g.slice(1)}</h3><div class="list">${ST.groups[g].map(setRow).join("")}</div></div>`).join("")}`;
     return { html, after: () => {
       $("#invite").onclick = async () => {
-        try { if (navigator.share) { await navigator.share({ title: "FOMO", url: A.signup_url }); return; } } catch (e) { if (e && e.name === "AbortError") return; }
-        try { await navigator.clipboard.writeText(A.signup_url); toast("Link copied"); } catch (e) { toast(A.signup_url); }
+        const url = $("#invite").dataset.url;                 // the exact SIGNUP_URL the desk wrote
+        try { if (navigator.share) { await navigator.share({ title: "FOMO", url }); return; } } catch (e) { if (e && e.name === "AbortError") return; }
+        try { await navigator.clipboard.writeText(url); toast("Link copied"); } catch (e) { toast(url); }
       };
       if (group) { const g = $("#grp-" + group); if (g) g.scrollIntoView(); }
     } };
