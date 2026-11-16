@@ -1,0 +1,63 @@
+name: publish-pages
+on:
+  repository_dispatch:
+    types: [publish]
+  workflow_dispatch: {}
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+  actions: write
+concurrency:
+  group: pages
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build site
+        env:
+          DATA_PATH: ${{ secrets.DATA_PATH }}
+          DATA_KEY: ${{ secrets.DATA_KEY }}
+          BLOB: ${{ github.event.client_payload.blob }}
+        run: |
+          set -euo pipefail
+          mkdir -p _site
+          cp -r web/. _site/
+          touch _site/.nojekyll
+          if [ -n "${BLOB:-}" ]; then
+            test ${#DATA_PATH} -ge 32
+            mkdir -p "_site/d/${DATA_PATH}"
+            printf '%s' "$BLOB" | base64 -d \
+              | openssl enc -d -aes-256-cbc -pbkdf2 -iter 100000 -pass env:DATA_KEY \
+              | tar -xz -C "_site/d/${DATA_PATH}" --no-same-owner state.json chart.json activity.json
+            echo "data files: $(ls "_site/d/${DATA_PATH}" | wc -l)"
+          else
+            echo "no data payload (manual run): shell only"
+          fi
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+          retention-days: 1
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
+  cleanup:
+    # The Pages artifact contains the data path; delete it as soon as it is deployed.
+    needs: deploy
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for id in $(gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts" --jq '.artifacts[].id'); do
+            gh api -X DELETE "repos/${{ github.repository }}/actions/artifacts/$id" && echo "deleted artifact"
+          done

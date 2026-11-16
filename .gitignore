@@ -1,0 +1,18 @@
+# never commit data, secrets, logs or local state
+.venv/
+__pycache__/
+*.pyc
+logs/
+output/
+_site/
+*.db
+*.db-wal
+*.db-shm
+*.tmp
+owner.json
+fields_mapping.md
+.desk_secrets/
+*.env
+*.pem
+*.key
+nohup.out
