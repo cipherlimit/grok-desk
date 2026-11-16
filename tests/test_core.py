@@ -5,7 +5,7 @@ from agents import analyst, risk, executor
 
 def test_links_carry_referral():
     u = links.coin_url("Fz4HmKzMZ9C3LGENsiEd6sJ9r23uQHcEmzhEF8wnpump", "solana")
-    assert u == "https://fomo.family/tokens/solana/Fz4HmKzMZ9C3LGENsiEd6sJ9r23uQHcEmzhEF8wnpump?r=savipww"
+    assert u == "https://fomo.family/coin?address=Fz4HmKzMZ9C3LGENsiEd6sJ9r23uQHcEmzhEF8wnpump&chainId=1399811149&r=savipww&source=share_link"
     assert links.profile_url("CipherLimit").endswith("CipherLimit?source=share_link&r=savipww")
 
 def test_fees():

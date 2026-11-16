@@ -1,17 +1,18 @@
-"""The ONLY place FOMO URLs are built. Every link carries the referral r=savipww.
-Agents call links.coin_url(mint, "solana"); never build a FOMO URL by hand."""
-from urllib.parse import quote
+import logging
 
-REF = "savipww"
-BASE = "https://fomo.family"
-CHAINS = {"solana": "solana", "base": "base", "bnb": "bnb", "bsc": "bnb", "robinhood": "robinhood"}
+log = logging.getLogger("links")
 
-def coin_url(mint: str, chain: str = "solana") -> str:
-    slug = CHAINS[chain.lower()]
-    return f"{BASE}/tokens/{slug}/{quote(mint, safe='')}?r={REF}"
+CHAIN_ID = {"solana": 1399811149, "robinhood": 4663, "base": 8453, "bnb": 56}
+SIGNUP_URL = "https://fomo.family/r/savipww"
 
-def profile_url(handle: str) -> str:
-    return f"{BASE}/profile/{quote(handle, safe='')}?source=share_link&r={REF}"
 
-def signup_url() -> str:
-    return f"{BASE}/r/{REF}"
+def coin_url(address, chain="solana"):
+    if chain not in CHAIN_ID:
+        log.warning("coin_url: unknown chain %r for %s, returning SIGNUP_URL", chain, address)
+        return SIGNUP_URL
+    return f"https://fomo.family/coin?address={address}&chainId={CHAIN_ID[chain]}&r=savipww&source=share_link"
+
+
+def profile_url(handle):
+    h = handle.lstrip("@")
+    return f"https://fomo.family/profile/{h}?source=share_link&r=savipww"
