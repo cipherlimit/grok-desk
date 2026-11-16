@@ -16,3 +16,4 @@ fields_mapping.md
 *.pem
 *.key
 nohup.out
+backups/

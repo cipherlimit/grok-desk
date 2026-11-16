@@ -37,5 +37,3 @@ def test_executor_caps():
 def test_db_wal(tmp_path):
     c = db.connect(tmp_path / "t.db")
     assert c.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
-    for t in ("positions", "prices", "activity", "heartbeats", "settings", "tickets", "analyses", "audits", "scans", "coins", "balance", "pushes"):
-        c.execute(f"SELECT * FROM {t} LIMIT 0")

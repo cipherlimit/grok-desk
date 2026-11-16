@@ -2,5 +2,5 @@
 import db
 
 def night_summary(conn) -> dict:
-    r = conn.execute("SELECT COUNT(*) n, COALESCE(SUM(pnl_usd),0) pnl FROM positions WHERE status='closed'").fetchone()
+    r = conn.execute("SELECT COUNT(*) n, COALESCE(SUM(pnl_usd),0) pnl FROM positions WHERE closed_at IS NOT NULL").fetchone()
     return {"closed": r["n"], "pnl_usd": round(r["pnl"], 2)}

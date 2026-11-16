@@ -1,4 +1,5 @@
-"""One asyncio process: agents + heartbeats + plan B output (state/chart/activity.json every 15s)."""
+"""One asyncio process: agents + heartbeats + plan B output (state/chart/activity.json every 15s).
+db.balance gets a row every minute and feeds the Home chart."""
 import asyncio, json, os, signal, time
 import db
 from bus import bus
@@ -7,7 +8,8 @@ from agents import scanner, auditor, analyst, executor, risk
 from agents.base import agent_logger
 
 log = agent_logger("main")
-CHART_MAX = 480   # 2h of 15s points, keeps the publish payload small
+BALANCE_EVERY_S = 60
+CHART_MAX = 480   # 8h of 1-minute points
 
 def settings(conn) -> dict:
     s = dict(DEFAULTS)
@@ -19,42 +21,46 @@ def atomic_write(path, obj):
     tmp.write_text(json.dumps(obj, separators=(",", ":")))
     os.replace(tmp, path)
 
-def balance(conn, s) -> float:
-    r = conn.execute("SELECT balance FROM balance WHERE mode=? ORDER BY id DESC LIMIT 1", (s["mode"],)).fetchone()
-    if r: return r["balance"]
-    b = s["paper_start_stack"] if s["mode"] == "PAPER" else (s["stack"] or 0)
-    conn.execute("INSERT INTO balance(ts,mode,balance,reason) VALUES(?,?,?,?)", (db.now_iso(), s["mode"], b, "start"))
+def current_balance(conn, s) -> float:
+    b = db.last_balance(conn)
+    if b is None:
+        b = s["paper_start_stack"] if s["mode"] == "PAPER" else (s["stack"] or 0)
+        db.add_balance(conn, b)
     return b
 
 async def writer(conn):
     OUT_DIR.mkdir(exist_ok=True)
-    chart_path = OUT_DIR / "chart.json"
-    try: chart = json.loads(chart_path.read_text())["points"]
-    except Exception: chart = []
+    last_bal_row = 0.0
     while True:
-        s = settings(conn); ts = db.now_iso(); bal = balance(conn, s)
-        db.heartbeat(conn, "main", "ok", f"pid {os.getpid()}")
-        hb = {r["agent"]: {"ts": r["ts"], "status": r["status"]} for r in conn.execute("SELECT * FROM heartbeats")}
-        openp = [dict(r) for r in conn.execute("SELECT mint,name,entry_price,size_usd,peak_price,stop_line,trail_active,opened_at,link FROM positions WHERE status!='closed'")]
+        s = settings(conn); ts = db.now_iso(); bal = current_balance(conn, s)
+        if time.time() - last_bal_row >= BALANCE_EVERY_S:
+            db.add_balance(conn, bal); last_bal_row = time.time()
+        db.heartbeat(conn, "main")
+        hb = {r["agent"]: r["ts"] for r in conn.execute("SELECT agent,ts FROM heartbeats")}
+        openp = [dict(r) for r in conn.execute(
+            "SELECT id,mint,opened_at,entry_price,size_usd,peak_price,stop_price,trail_active,exit_reason,mode "
+            "FROM positions WHERE closed_at IS NULL")]
         atomic_write(OUT_DIR / "state.json", {
             "ts": ts, "mode": s["mode"], "balance": round(bal, 2), "currency": "USD",
             "fomo_handle": s["fomo_handle"], "analyst_mode": s["analyst_mode"],
             "hosting": s["hosting"], "open_positions": openp, "heartbeats": hb,
             "pills": {"stop_pct": s["risk.stop_pct"], "trail_pct": s["risk.trail_pct"]}})
-        chart.append([int(time.time()), round(bal, 2)]); chart = chart[-CHART_MAX:]
-        atomic_write(chart_path, {"ts": ts, "points": chart})
-        acts = [dict(r) for r in conn.execute("SELECT ts,agent,title,subtitle,value,extra,mint FROM activity ORDER BY id DESC LIMIT 100")]
+        pts = [[r["ts"], r["value"]] for r in conn.execute(
+            "SELECT ts,value FROM (SELECT ts,value,rowid FROM balance ORDER BY ts DESC, rowid DESC LIMIT ?) ORDER BY ts", (CHART_MAX,))]
+        atomic_write(OUT_DIR / "chart.json", {"ts": ts, "points": pts})
+        acts = [dict(r) for r in conn.execute(
+            "SELECT ts,kind,mint,agent,title,subtitle,value FROM activity ORDER BY id DESC LIMIT 100")]
         atomic_write(OUT_DIR / "activity.json", {"ts": ts, "items": acts})
         await asyncio.sleep(TICK_S)
 
 async def amain():
     LOG_DIR.mkdir(exist_ok=True)
     conn = db.connect()
+    if not db.schema_matches(conn):
+        raise SystemExit("db schema does not match STEP 4 spec; run tools/migrate_step4.py")
     s = settings(conn)
     for k in ("analyst_mode", "fomo_handle", "hosting", "mode", "paper_start_stack"):
         if db.get_setting(conn, k) is None: db.set_setting(conn, k, s[k])
-    if not conn.execute("SELECT 1 FROM activity LIMIT 1").fetchone():
-        db.activity(conn, "main", "Desk online", "PAPER · plan B (GitHub Pages)", f"${s['paper_start_stack']:.0f}")
     log.info("desk start pid=%s mode=%s", os.getpid(), s["mode"])
     tasks = [asyncio.create_task(writer(conn), name="writer")]
     for m in (scanner, auditor, analyst, executor, risk):

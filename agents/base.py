@@ -10,7 +10,7 @@ def agent_logger(name):
         lg.addHandler(h); lg.setLevel(logging.INFO)
     return lg
 
-async def idle_loop(name, conn, every=15, detail="stub: wired in a later step"):
+async def idle_loop(name, conn, every=15):
     while True:
-        db.heartbeat(conn, name, "idle", detail)
+        db.heartbeat(conn, name)
         await asyncio.sleep(every)
