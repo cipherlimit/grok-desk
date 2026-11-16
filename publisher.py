@@ -8,19 +8,52 @@ from agents.base import agent_logger
 
 REPO = os.environ.get("DESK_REPO", "cipherlimit/grok-desk")
 EVERY = int(os.environ.get("PUBLISH_EVERY_S", "180"))
-MAX_BLOB = 100_000
+MAX_BLOB = 60_000          # keep repository_dispatch payloads small
 log = agent_logger("publisher")
 
-def pack() -> str:
-    buf = io.BytesIO()
-    with tarfile.open(fileobj=buf, mode="w:gz") as t:
-        for n in ("state.json", "chart.json", "activity.json"):
-            p = OUT_DIR / n
-            if p.exists(): t.add(p, arcname=n)
+def _files():
+    """Every plan B JSON under output/ (recursive), except reports and temp files."""
+    out = []
+    for p in sorted(OUT_DIR.rglob("*.json")):
+        rel = p.relative_to(OUT_DIR).as_posix()
+        if rel.startswith("night_report") or "/." in rel: continue
+        out.append((rel, p))
+    return out
+
+def _encrypt(raw: bytes) -> str:
     env = dict(os.environ, DATA_KEY=secret("DATA_KEY"))
     enc = subprocess.run(["openssl", "enc", "-aes-256-cbc", "-pbkdf2", "-iter", "100000", "-salt",
-                          "-pass", "env:DATA_KEY"], input=buf.getvalue(), capture_output=True, env=env, check=True).stdout
+                          "-pass", "env:DATA_KEY"], input=raw, capture_output=True, env=env, check=True).stdout
     return base64.b64encode(enc).decode()
+
+def _tar(files) -> bytes:
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz", compresslevel=9) as t:
+        for rel, p in files: t.add(p, arcname=rel)
+    return buf.getvalue()
+
+def pack() -> str:
+    """Fit under MAX_BLOB: drop coin/ files of coins without a position or signal (oldest first),
+    then older activity pages, never state/chart/activity/account/settings."""
+    files = _files()
+    blob = _encrypt(_tar(files))
+    if len(blob) <= MAX_BLOB: return blob
+    keep_first = {"state.json", "chart.json", "activity.json", "account.json", "settings.json", "coins.json"}
+    droppable = sorted([f for f in files if f[0].startswith(("coin/", "audit/", "activity/"))],
+                       key=lambda f: (f[0].startswith("activity/") is False, f[1].stat().st_mtime))
+    pos_mints = set()
+    try:
+        st = json.loads((OUT_DIR / "state.json").read_text())
+        pos_mints = {p["mint"] for p in st.get("open_positions", [])}
+    except Exception: pass
+    droppable = [f for f in droppable if not any(m in f[0] for m in pos_mints)]
+    while len(blob) > MAX_BLOB and droppable:
+        n = max(1, len(droppable) // 4)
+        gone, droppable = droppable[:n], droppable[n:]
+        files = [f for f in files if f not in gone]
+        blob = _encrypt(_tar(files))
+    log.info("trimmed to %d files to fit %dB", len(files), MAX_BLOB)
+    return blob
 
 def publish_once() -> bool:
     blob = pack()

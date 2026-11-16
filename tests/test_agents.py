@@ -21,18 +21,18 @@ def pika_pair(**over):
 # ======================= settings =======================
 def test_every_bracket_is_a_live_setting(conn):
     s = S(conn)
-    for k, v in {"scanner.min_liq_usd": 40000, "scanner.top10_max_pct": 25, "scanner.h1_max_pct": 80,
-                 "scanner.min_age_min": 10, "scanner.room_max_min": 60, "scanner.dex_every_s": 60,
+    for k, v in {"scanner.min_liquidity_usd": 40000, "scanner.max_top10_pct": 25, "scanner.max_h1_change_pct": 80,
+                 "scanner.min_pool_age_min": 10, "scanner.max_wait_min": 60, "scanner.poll_s": 60,
                  "scanner.dex_max_rpm": 250, "scanner.runner_h24_pct": 300, "scanner.ws_silent_s": 120,
-                 "scanner.dex_429_wait_s": 30, "auditor.dev_max_pct": 5, "auditor.lp_min_pct": 99,
-                 "auditor.liq_drop_max_pct": 50, "auditor.bundle_max": 5, "auditor.delegate_max": 10,
+                 "scanner.dex_429_wait_s": 30, "auditor.max_dev_pct": 5, "auditor.min_lp_locked_pct": 99,
+                 "auditor.liq_drop_max_pct": 50, "auditor.max_bundled": 5, "auditor.max_delegated_accounts": 10,
                  "auditor.retries": 3, "auditor.retry_gap_s": 2, "analyst.state_max_chars": 3000,
-                 "executor.min_usd": 47.5, "executor.liq_drop_max_pct": 20, "executor.price_run_max_pct": 15,
-                 "executor.bought_wait_min": 5, "below_min_paper": "trade", "below_min_live": "skip", "risk.no_price_polls": 4, "risk.sold_wait_min": 2}.items():
+                 "executor.min_ticket_usd": 47.5, "executor.recheck_liq_drop_pct": 20, "executor.recheck_price_up_pct": 15,
+                 "executor.confirm_window_min": 5, "executor.below_min_paper": "trade", "executor.below_min_live": "skip", "risk.no_price_polls": 4, "risk.confirm_window_min": 2}.items():
         assert s[k] == v, k
     assert conn.execute("SELECT COUNT(*) FROM settings").fetchone()[0] >= 60
-    db.set_setting(conn, "scanner.min_liq_usd", 1000, who="test")
-    assert S(conn)["scanner.min_liq_usd"] == 1000           # read live
+    db.set_setting(conn, "scanner.min_liquidity_usd", 1000, who="test")
+    assert S(conn)["scanner.min_liquidity_usd"] == 1000           # read live
 
 # ======================= Scanner =======================
 def test_scanner_kill_order(conn):
@@ -281,7 +281,7 @@ def test_analyst_state_numbers_only():
 
 def test_analyst_jev_mode_without_key_rejects_no_answer(conn, monkeypatch):
     monkeypatch.setattr(analyst, "secret", lambda k: None)
-    _coin(conn); db.set_setting(conn, "analyst_mode", "jev")
+    _coin(conn); db.set_setting(conn, "analyst.mode", "jev")
     out = run(analyst.Analyst(conn, Bus(), FakeSrc(dex=raw("dexscreener_pair.json"))).analyze(_an_msg()))
     assert out["failed"] == ["no answer"] and not out["passed"]          # never falls back silently
 
@@ -290,7 +290,7 @@ def test_sizing(conn):
     s = S(conn)
     assert executor.size_for(200, 0, 100_000, s, "PAPER") == (16.0, "size_pct, under min traded", 16.0, None)
     assert executor.size_for(200, 0, 100_000, s, "LIVE") == (None, "size_pct", 16.0, "under $47.50")
-    s2 = {**s, "below_min_paper": "bump"}
+    s2 = {**s, "executor.below_min_paper": "bump"}
     assert executor.size_for(200, 0, 100_000, s2)[0] == 47.5
     assert executor.size_for(200, 160, 100_000, s2)[3] == "no free stack"
     assert executor.size_for(1240, 0, 1_000_000, s) == (99.2, "size_pct", 99.2, None)
@@ -312,7 +312,7 @@ def _ex_msg(price_at_analyst=1e-6):
             "price_at_analyst": price_at_analyst, "name": "PIKA COIN"}
 
 def test_executor_paper_fill_stop_and_one_push(conn, pushes):
-    _coin(conn); db.add_balance(conn, 200); db.set_setting(conn, "below_min_paper", "bump"); bus = Bus()
+    _coin(conn); db.add_balance(conn, 200); db.set_setting(conn, "executor.below_min_paper", "bump"); bus = Bus()
     p = pika_pair(liquidity__usd=50_000.0, priceUsd="0.000001")
     ex = executor.Executor(conn, bus, FakeSrc(dex=[p]))
     out = run(ex.handle(_ex_msg()))
@@ -337,10 +337,10 @@ def test_executor_paper_small_size_opens_at_real_size(conn, pushes):
     pos = conn.execute("SELECT size_usd FROM positions").fetchone()
     assert pos[0] == 16.0
     pnl, fee = fees.paper_pnl(16.0, 1e-6, 1e-6)
-    assert fee == pytest.approx(16 * 0.0045 + (16 - 16 * 0.0045) * 0.0045)        # fees.py as usual
+    assert fee == pytest.approx(fees.side_fee(16) + fees.side_fee(16 - fees.side_fee(16)))   # fees.py tiers
 
 def test_executor_live_small_size_skips(conn, pushes):
-    _coin(conn); db.set_setting(conn, "mode", "LIVE"); db.set_setting(conn, "stack", 200)
+    _coin(conn); db.set_setting(conn, "desk.mode", "LIVE"); db.set_setting(conn, "desk.stack", 200)
     ex = executor.Executor(conn, Bus(), FakeSrc(dex=[pika_pair(liquidity__usd=50_000.0, priceUsd="0.000001")]))
     out = run(ex.handle(_ex_msg()))
     assert (out["status"], out["reason"], out["mode"]) == ("skipped", "under $47.50", "LIVE") and not pushes

@@ -5,7 +5,7 @@ import asyncio, json, re, time, unicodedata
 import websockets
 import db, fields, onchain
 from sources import PUMPPORTAL_WS, DEX_BATCH, RateLimited, SourceError, with_retry
-from agents.base import agent_logger
+from agents.base import agent_logger, paused
 
 NAME = "scanner"
 log = agent_logger(NAME)
@@ -35,12 +35,12 @@ def decide(s: dict, liq, top10_fn_result, h1, copycat, age_min) -> tuple[str | N
     Returns (verdict, reason, needs_top10) ; verdict None = keep waiting.
     User rule 2026-11-16: no kill is judged before pool age >= [10] min (scanner.judge_from_age_min)."""
     if age_min < s["scanner.judge_from_age_min"]: return None, None, False
-    if liq < s["scanner.min_liq_usd"]: return "kill", f"liq {fmt_k(liq)}", False
+    if liq < s["scanner.min_liquidity_usd"]: return "kill", f"liq {fmt_k(liq)}", False
     if top10_fn_result is None: return None, None, True
-    if top10_fn_result > s["scanner.top10_max_pct"]: return "kill", f"top 10 hold {top10_fn_result:.0f}%", False
-    if h1 is not None and h1 > s["scanner.h1_max_pct"]: return "kill", f"+{h1:.0f}% in 1h", False
+    if top10_fn_result > s["scanner.max_top10_pct"]: return "kill", f"top 10 hold {top10_fn_result:.0f}%", False
+    if h1 is not None and h1 > s["scanner.max_h1_change_pct"]: return "kill", f"+{h1:.0f}% in 1h", False
     if copycat: return "kill", f"copycat of {copycat}", False
-    if age_min >= s["scanner.min_age_min"]: return "pass", None, False
+    if age_min >= s["scanner.min_pool_age_min"]: return "pass", None, False
     return None, None, False
 
 class Scanner:
@@ -81,6 +81,8 @@ class Scanner:
 
     async def on_migration(self, msg: dict):
         mint = fields.dig(msg, fields.PUMPPORTAL["mint"])
+        if paused(self.c, NAME):
+            log.info("paused: migration ignored mint=%s", mint); return
         if self.c.execute("SELECT 1 FROM coins WHERE mint=?", (mint,)).fetchone():
             log.info("duplicate migration ignored mint=%s", mint); return
         self.received += 1
@@ -108,8 +110,9 @@ class Scanner:
     # ---------- 60s cycle ----------
     async def cycle(self):
         s = self.s
+        if paused(self.c, NAME): return 0
         if db.local_today() != self.runners_day: self.runners, self.runners_day = {}, db.local_today()
-        room = db.waiting_room(self.c, s["scanner.room_max_min"])
+        room = db.waiting_room(self.c, s["scanner.max_wait_min"])
         if not room: return 0
         mints = [r["mint"] for r in room]
         pairs = []
@@ -139,14 +142,14 @@ class Scanner:
         in_room_min = (now - db.parse_iso(row["migrated_at"])) / 60
         pair = onchain.best_pumpswap_pair(pairs, mint)
         if pair is None:
-            if in_room_min >= s["scanner.room_max_min"]:
+            if in_room_min >= s["scanner.max_wait_min"]:
                 return self.emit(row, None, None, None, None, "kill", "never qualified")
             return                                   # DexScreener doesn't know it yet: it waits
         d = fields.dex_read(pair)
         self.c.execute("UPDATE coins SET name=?, symbol=?, pool=? WHERE mint=?", (d["name"], d["symbol"], d["pool"], mint))
         liq = d["liquidity_usd"]
         if liq is None:
-            if in_room_min >= s["scanner.room_max_min"]:
+            if in_room_min >= s["scanner.max_wait_min"]:
                 return self.emit(row, d, None, None, None, "kill", "never qualified")
             return
         age_min = int((now * 1000 - (d["pair_created_ms"] or now * 1000)) / 60000)
@@ -160,7 +163,7 @@ class Scanner:
                 log.warning("top10 read failed mint=%s (%s), waiting", mint, e)
             cc = copycat_of(d["name"], d["symbol"], mint, self.runners)
             verdict, reason, _ = decide(s, liq, top10, d["chg_h1"], cc, age_min)
-        if verdict is None and in_room_min >= s["scanner.room_max_min"]:
+        if verdict is None and in_room_min >= s["scanner.max_wait_min"]:
             verdict, reason = "kill", "never qualified"
         if verdict: self.emit(row, d, liq, top10, age_min, verdict, reason)
 
@@ -190,7 +193,7 @@ class Scanner:
                 db.heartbeat(self.c, NAME)
             except Exception as e:
                 log.exception("cycle error: %s", e)
-            await asyncio.sleep(max(1, self.s["scanner.dex_every_s"] - (time.time() - t0)))
+            await asyncio.sleep(max(1, self.s["scanner.poll_s"] - (time.time() - t0)))
 
 async def run(conn, bus, src):
     sc = Scanner(conn, bus, src)

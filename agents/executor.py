@@ -3,7 +3,7 @@ Arithmetic + 1 Telegram button; PAPER fills at the signal price at once. (PART 5
 import asyncio, time
 import db, fields, links, onchain, telegram
 from sources import SourceError, with_retry
-from agents.base import agent_logger
+from agents.base import agent_logger, wait_unpaused
 
 NAME = "executor"
 log = agent_logger(NAME)
@@ -15,13 +15,13 @@ def size_for(stack: float, open_usd: float, liquidity_usd: float, s: dict, mode:
     """Returns (final size | None, cap hit, raw size, skip reason).
     Below [$47.50]: mode-aware setting below_min_paper / below_min_live = trade | bump | skip."""
     free = stack - open_usd
-    raw = stack * s["executor.size_pct"] / 100
+    raw = stack * s["executor.stack_pct"] / 100
     size, cap = raw, "size_pct"
-    liq_cap = (liquidity_usd or 0) * s["executor.liq_cap_pct"] / 100
+    liq_cap = (liquidity_usd or 0) * s["executor.max_pool_pct"] / 100
     if liq_cap < size: size, cap = liq_cap, "liquidity"
-    mn = s["executor.min_usd"]
+    mn = s["executor.min_ticket_usd"]
     if size < mn:
-        rule = s["below_min_paper"] if mode == "PAPER" else s["below_min_live"]
+        rule = s["executor.below_min_paper"] if mode == "PAPER" else s["executor.below_min_live"]
         if rule == "trade":
             cap = f"{cap}, under min traded"
         elif rule == "bump":
@@ -31,16 +31,34 @@ def size_for(stack: float, open_usd: float, liquidity_usd: float, s: dict, mode:
     if size > free: return None, cap, raw, "no free stack"
     return round(size, 2), cap, raw, None
 
+def ticket_check(s: dict, stack: float | None = None) -> tuple[str, str]:
+    """STEP 10. min_stack = min_ticket_usd / (stack_pct / 100). Returns (level, message);
+    level "ok" | "info" | "warn" (warn = every coin would be skipped: don't start an empty night silently)."""
+    mode = s["desk.mode"]
+    if stack is None:
+        stack = s["desk.paper_start_stack"] if mode == "PAPER" else (s["desk.stack"] or 0)
+    mn, pct = s["executor.min_ticket_usd"], s["executor.stack_pct"]
+    min_stack = mn / (pct / 100)
+    rule = s["executor.below_min_paper"] if mode == "PAPER" else s["executor.below_min_live"]
+    if stack >= min_stack: return "ok", f"stack ${stack:,.2f} >= ${min_stack:,.2f}: tickets are {fmt_pct(pct)}% of stack"
+    if rule == "bump":
+        return "info", f"tickets bumped to ${mn:.2f} = {fmt_pct(100 * mn / stack)}% of stack"
+    if rule == "trade":
+        return "info", f"{mode}: tickets under ${mn:.2f} trade as-is (${stack * pct / 100:.2f} = {fmt_pct(pct)}% of stack)"
+    return "warn", (f"every coin will be skipped, stack under ${min_stack:,.2f}. "
+                    f"Switch below_min to bump or raise the stack.")
+
 def recheck(liq_now, liq_scan, price_now, price_analyst, s) -> str | None:
-    if liq_scan and liq_now is not None and liq_now < liq_scan * (1 - s["executor.liq_drop_max_pct"] / 100):
+    if liq_scan and liq_now is not None and liq_now < liq_scan * (1 - s["executor.recheck_liq_drop_pct"] / 100):
         return "liquidity dropping"
-    if price_analyst and price_now > price_analyst * (1 + s["executor.price_run_max_pct"] / 100):
+    if price_analyst and price_now > price_analyst * (1 + s["executor.recheck_price_up_pct"] / 100):
         return "ran before the push"
     return None
 
-def push_text(mode, name, size, pct, score, stop_pct, trail_pct) -> str:
+def push_text(mode, name, size, pct, score, stop_pct, trail_pct, audited=8) -> str:
+    aud = "Auditor 8/8" if audited == 8 else "Auditor off"
     return (f"{'PAPER · ' if mode == 'PAPER' else ''}Buy {name} · ${size:.2f} · {fmt_pct(pct)}% of stack\n"
-            f"Auditor 8/8 · Analyst {score} · stop -{fmt_pct(stop_pct)}% · trail {fmt_pct(trail_pct)}%")
+            f"{aud} · Analyst {score} · stop -{fmt_pct(stop_pct)}% · trail {fmt_pct(trail_pct)}%")
 
 class Executor:
     def __init__(self, conn, bus, src):
@@ -61,7 +79,7 @@ class Executor:
     async def handle(self, msg: dict) -> dict | None:
         an, scan = msg["analyst"], msg["scanner"]
         mint, s = an["mint"], db.settings_all(self.c)
-        mode = s["mode"]; link = links.coin_url(mint, "solana")
+        mode = s["desk.mode"]; link = links.coin_url(mint, "solana")
         night_start, _ = db.night_bounds()
         if self.c.execute("SELECT 1 FROM signals WHERE mint=? AND ts>=?", (mint, night_start)).fetchone():
             log.info("2nd pass ignored (1 push per coin per night) mint=%s", mint); return None
@@ -69,7 +87,7 @@ class Executor:
             log.info("open position exists, never a 2nd buy mint=%s", mint); return None
         if db.is_skipped(self.c, mint):
             log.info("in db.skips, gone for the night mint=%s", mint); return None
-        stack = (db.last_balance(self.c) or s["paper_start_stack"]) if mode == "PAPER" else (s["stack"] or 0)
+        stack = (db.last_balance(self.c) or s["desk.paper_start_stack"]) if mode == "PAPER" else (s["desk.stack"] or 0)
         open_usd = sum(r["size_usd"] for r in db.open_positions(self.c))
         try:
             pairs = await with_retry(lambda: self.src.dex_tokens([mint]), 2, 2)
@@ -85,7 +103,7 @@ class Executor:
         if why: return self._skip(mint, mode, link, why, stack, raw, cap, price)
         pct = round(100 * size / stack, 1)
         name = d.get("name") or msg.get("name") or mint[:6]
-        text = push_text(mode, name, size, pct, an["score"], s["risk.stop_pct"], s["risk.trail_pct"])
+        text = push_text(mode, name, size, pct, an["score"], s["risk.stop_pct"], s["risk.trail_pct"], msg.get("auditor_checked", 8))
         buttons = [[telegram.url_button("Buy on FOMO", link)],
                    [telegram.cb_button("Bought", f"bought:{mint}"), telegram.cb_button("Skip", f"skip:{mint}")]]
         cur = self.c.execute("INSERT INTO signals(mint,ts,price,size_usd,stack_pct,link,mode,status) VALUES(?,?,?,?,?,?,?,?)",
@@ -99,7 +117,7 @@ class Executor:
             status = "bought"                       # fill anyway: the paper night stays honest
         elif pushed:
             try:
-                r = await asyncio.wait_for(self.pending[mint], s["executor.bought_wait_min"] * 60)
+                r = await asyncio.wait_for(self.pending[mint], s["executor.confirm_window_min"] * 60)
                 status = "bought" if r == "bought" else "skipped"
             except asyncio.TimeoutError:
                 status = "missed"
@@ -139,6 +157,7 @@ async def run(conn, bus, src):
     async def work():
         while True:
             m = await bus.get("executor")
-            try: asyncio.create_task(ex.handle(m)) if db.settings_all(conn)["mode"] == "LIVE" else await ex.handle(m)
+            await wait_unpaused(conn, NAME)
+            try: asyncio.create_task(ex.handle(m)) if db.settings_all(conn)["desk.mode"] == "LIVE" else await ex.handle(m)
             except Exception as e: log.exception("executor error: %s", e)
     await asyncio.gather(hb(), work(), ex.callbacks())

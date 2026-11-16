@@ -1,4 +1,4 @@
-"""One asyncio process: agents + heartbeats + plan B output (state/chart/activity.json every 15s).
+"""One asyncio process: agents + heartbeats + plan B output via api.write_all every 15s.
 db.balance gets a row every minute and feeds the Home chart."""
 import asyncio, json, os, signal, time
 import db
@@ -17,55 +17,36 @@ CHART_MAX = 480   # 8h of 1-minute points
 def settings(conn) -> dict:
     return db.settings_all(conn)
 
-def cards(conn) -> dict:
-    start, _ = db.night_bounds()
-    q = lambda sql: conn.execute(sql, (start,)).fetchone()[0]
-    return {"pools": q("SELECT COUNT(*) FROM coins WHERE migrated_at>=?"),
-            "scans": q("SELECT COUNT(*) FROM scans WHERE ts>=?"),
-            "passed_scanner": q("SELECT COUNT(*) FROM scans WHERE verdict='pass' AND ts>=?"),
-            "taken_apart": q("SELECT COUNT(DISTINCT mint) FROM audits WHERE ts>=?"),
-            "rejected": q("SELECT COUNT(*) FROM activity WHERE kind='rejected' AND ts>=?"),
-            "trades": q("SELECT COUNT(*) FROM positions WHERE opened_at>=?")}
-
-def atomic_write(path, obj):
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(obj, separators=(",", ":")))
-    os.replace(tmp, path)
-
 def current_balance(conn, s) -> float:
     b = db.last_balance(conn)
     if b is None:
-        b = s["paper_start_stack"] if s["mode"] == "PAPER" else (s["stack"] or 0)
+        b = s["desk.paper_start_stack"] if s["desk.mode"] == "PAPER" else (s["desk.stack"] or 0)
         db.add_balance(conn, b)
     return b
 
+async def night_start_check(conn, s, night_seen):
+    """STEP 10 ticket check at night start: Telegram only when it warns (every coin would be skipped)."""
+    start, _ = db.night_bounds()
+    if night_seen.get("n") == start: return
+    night_seen["n"] = start
+    level, msg = executor.ticket_check(s)
+    log.info("ticket check night=%s %s: %s", start, level, msg)
+    if level == "warn": await telegram.send(msg)
+
 async def writer(conn):
+    """Plan B: api.write_all every [15]s (state, chart, activity pages, coin/audit/agent docs, account, settings)."""
     OUT_DIR.mkdir(exist_ok=True)
-    last_bal_row = 0.0
+    last_bal_row, night_seen = 0.0, {}
     while True:
-        s = settings(conn); ts = db.now_iso(); bal = current_balance(conn, s)
-        if time.time() - last_bal_row >= BALANCE_EVERY_S:
-            db.add_balance(conn, bal); last_bal_row = time.time()
-        db.heartbeat(conn, "main")
-        hb = {r["agent"]: r["ts"] for r in conn.execute("SELECT agent,ts FROM heartbeats")}
-        openp = [dict(r) for r in conn.execute(
-            "SELECT id,mint,opened_at,entry_price,size_usd,peak_price,stop_price,trail_active,exit_reason,mode "
-            "FROM positions WHERE closed_at IS NULL")]
-        atomic_write(OUT_DIR / "state.json", {
-            "ts": ts, "mode": s["mode"], "balance": round(bal, 2), "currency": "USD",
-            "fomo_handle": s["fomo_handle"], "analyst_mode": s["analyst_mode"],
-            "hosting": s["hosting"], "open_positions": openp, "heartbeats": hb,
-            "pills": {"stop_pct": s["risk.stop_pct"], "trail_pct": s["risk.trail_pct"]},
-            "cards": cards(conn)})
-        pts = [[r["ts"], r["value"]] for r in conn.execute(
-            "SELECT ts,value FROM (SELECT ts,value,rowid FROM balance ORDER BY ts DESC, rowid DESC LIMIT ?) ORDER BY ts", (CHART_MAX,))]
-        atomic_write(OUT_DIR / "chart.json", {"ts": ts, "points": pts})
-        acts = [dict(r) for r in conn.execute(
-            "SELECT ts,kind,mint,agent,title,subtitle,value FROM activity ORDER BY id DESC LIMIT 100")]
-        scans = [dict(r) for r in conn.execute(
-            "SELECT s.ts,s.mint,c.name,s.liquidity_usd,s.top10_pct,s.h1_change_pct,s.age_min,s.verdict,s.reason "
-            "FROM scans s LEFT JOIN coins c USING(mint) ORDER BY s.id DESC LIMIT 50")]
-        atomic_write(OUT_DIR / "activity.json", {"ts": ts, "items": acts, "scans": scans})
+        try:
+            s = settings(conn); bal = current_balance(conn, s)
+            if time.time() - last_bal_row >= BALANCE_EVERY_S:
+                db.add_balance(conn, bal); last_bal_row = time.time()
+            db.heartbeat(conn, "main")
+            await night_start_check(conn, s, night_seen)
+            api.write_all(conn, OUT_DIR)
+        except Exception as e:
+            log.exception("writer error: %s", type(e).__name__)
         await asyncio.sleep(TICK_S)
 
 async def amain():
@@ -75,13 +56,13 @@ async def amain():
         raise SystemExit("db schema does not match STEP 4 spec; run tools/migrate_step4.py")
     db.seed_settings(conn)
     s = settings(conn)
-    src = Sources(lambda: rpc_url_for(db.settings_all(conn)["rpc_url"]),
+    src = Sources(lambda: rpc_url_for(db.settings_all(conn)["desk.rpc_url"]),
                   lambda: db.settings_all(conn)["scanner.dex_max_rpm"])
-    log.info("desk start pid=%s mode=%s", os.getpid(), s["mode"])
+    log.info("desk start pid=%s mode=%s", os.getpid(), s["desk.mode"])
     tasks = [asyncio.create_task(writer(conn), name="writer")]
     for m in (scanner, auditor, analyst, executor, risk):
         tasks.append(asyncio.create_task(m.run(conn, bus, src), name=m.NAME))
-    tasks.append(asyncio.create_task(telegram.poll_callbacks(bus), name="tg_callbacks"))
+    tasks.append(asyncio.create_task(telegram.poll(conn, bus, src), name="telegram"))
     tasks.append(asyncio.create_task(api.price_loop(conn, src), name="api_prices"))
     def _died(t):
         if not t.cancelled() and t.exception():

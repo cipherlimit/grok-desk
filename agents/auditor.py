@@ -3,7 +3,7 @@ Every source: retry [3] tries [2]s apart; still nothing = red "no data: {layer}"
 import asyncio, time
 import db, fields, onchain, telegram
 from sources import SourceError, with_retry
-from agents.base import agent_logger
+from agents.base import agent_logger, wait_unpaused
 
 NAME = "auditor"
 log = agent_logger(NAME)
@@ -98,12 +98,19 @@ class Auditor:
         self.c, self.bus, self.src = conn, bus, src
         self.layer8_alerted_night = None
 
-    async def audit(self, scan: dict) -> dict | None:
+    async def audit(self, scan: dict, adhoc: bool = False) -> dict | None:
+        """adhoc = Telegram "buy X" for a coin never pushed: audit now, no bus, no Activity, not on the desk."""
         mint, s = scan["mint"], db.settings_all(self.c)
         night_start, _ = db.night_bounds()
-        if self.c.execute("SELECT 1 FROM audits WHERE mint=? AND ts>=?", (mint, night_start)).fetchone():
+        if not adhoc and self.c.execute("SELECT 1 FROM audits WHERE mint=? AND ts>=?", (mint, night_start)).fetchone():
             log.info("already audited tonight, ignored mint=%s", mint); return None
         coin = self.c.execute("SELECT * FROM coins WHERE mint=?", (mint,)).fetchone()
+        if not s["auditor.enabled"] and not adhoc:          # "Take apart before buying" off (asked twice in the app/Telegram)
+            out = {"agent": "auditor", "mint": mint, "ts": db.now_iso(), "passed": True, "layersChecked": 0,
+                   "layers": [], "holders": None, "reason": "auditor off"}
+            log.info("auditor off: mint=%s sent on without layers", mint)
+            await self.bus.put("analyst", {"scanner": scan, "auditor": out, "dev_pct": None})
+            return out
         tries, gap = int(s["auditor.retries"]), s["auditor.retry_gap_s"]
         cache = {}
         async def get(key, fn):              # each source fetched once per audit, with retries
@@ -124,26 +131,26 @@ class Auditor:
                 try: sup = await get("supply", lambda: onchain.supply_raw(self.src, mint))
                 except NoData: return False, "no supply", "rpc"
                 now_raw = await get("devbal", lambda: onchain.wallet_balance_raw(self.src, coin["creator"], mint))
-                ok, v = l3_dev(now_raw, coin["creator_balance_at_migration"], sup, s["auditor.dev_max_pct"])
+                ok, v = l3_dev(now_raw, coin["creator_balance_at_migration"], sup, s["auditor.max_dev_pct"])
                 cache["dev_pct"] = 100.0 * now_raw / sup if sup else None
                 return ok, v, "rpc"
             if n == 4:
                 sup = await get("supply", lambda: onchain.supply_raw(self.src, mint))
                 pct = await get("top10", lambda: onchain.top10_pct(self.src, mint, pool, sup))
-                return l4_top10(pct, s["auditor.top10_max_pct"]) + ("rpc",)
+                return l4_top10(pct, s["auditor.max_top10_pct"]) + ("rpc",)
             if n == 5:
                 rep = await get("report", lambda: self.src.rug_report(mint))
                 pairs = await get("dex", lambda: self.src.dex_tokens([mint]))
                 pair = onchain.best_pumpswap_pair(pairs, mint)
                 liq_now = fields.dig(pair, "liquidity.usd") if pair else None
                 return l5_liquidity(rep, pool, liq_now, scan.get("liquidityUsd"),
-                                    s["auditor.lp_min_pct"], s["auditor.liq_drop_max_pct"]) + ("rugcheck",)
+                                    s["auditor.min_lp_locked_pct"], s["auditor.liq_drop_max_pct"]) + ("rugcheck",)
             if n == 6:
                 if not coin or not coin["migrated_at"]: raise NoData
-                return l6_age(db.parse_iso(coin["migrated_at"]), time.time(), s["auditor.min_age_min"]) + ("rpc",)
+                return l6_age(db.parse_iso(coin["migrated_at"]), time.time(), s["auditor.min_pool_age_min"]) + ("rpc",)
             if n == 7:
                 g = await get("graph", lambda: self.src.rug_graph(mint))
-                ok, v, _ = l7_bundles(g, s["auditor.bundle_max"]); return ok, v, "rugcheck"
+                ok, v, _ = l7_bundles(g, s["auditor.max_bundled"]); return ok, v, "rugcheck"
             if n == 8:
                 async def gpa():
                     a = await self.src.rpc("getProgramAccounts", [fields.TOKEN_PROGRAM, {"encoding": "jsonParsed",
@@ -154,7 +161,7 @@ class Auditor:
                 try: accs = await get("gpa", gpa)
                 except NoData:
                     await self.layer8_down(); raise
-                ok, v, holders = l8_delegations(accs, s["auditor.delegate_max"])
+                ok, v, holders = l8_delegations(accs, s["auditor.max_delegated_accounts"])
                 cache["holders"] = holders
                 self.c.execute("UPDATE coins SET holders=? WHERE mint=?", (holders, mint))
                 return ok, v, "rpc"
@@ -175,7 +182,8 @@ class Auditor:
         passed = reason is None
         out = {"agent": "auditor", "mint": mint, "ts": db.now_iso(), "passed": passed, "layersChecked": len(layers),
                "layers": layers, "holders": cache.get("holders"), "reason": reason}
-        log.info("verdict mint=%s passed=%s layers=%d reason=%s", mint, passed, len(layers), reason)
+        log.info("verdict mint=%s passed=%s layers=%d reason=%s%s", mint, passed, len(layers), reason, " (adhoc)" if adhoc else "")
+        if adhoc: return out
         if passed:
             await self.bus.put("analyst", {"scanner": scan, "auditor": out, "dev_pct": cache.get("dev_pct")})
         else:
@@ -190,6 +198,25 @@ class Auditor:
         ok = await telegram.send("layer 8 down, every coin is red until rpc_url changes")
         log.error("layer 8 down: getProgramAccounts refused; telegram sent=%s", ok)
 
+async def adhoc_scan(conn, src, mint: str) -> dict | None:
+    """Build the Scanner-shaped input for an ad-hoc audit from DexScreener + RugCheck (coin row if missing)."""
+    try: pairs = await with_retry(lambda: src.dex_tokens([mint]), 3, 2)
+    except SourceError: pairs = []
+    pair = onchain.best_pumpswap_pair(pairs, mint)
+    if not pair: return None
+    d = fields.dex_read(pair)
+    if not conn.execute("SELECT 1 FROM coins WHERE mint=?", (mint,)).fetchone():
+        creator = None
+        try: creator = fields.dig(await with_retry(lambda: src.rug_report(mint), 3, 2), fields.RUG["creator"])
+        except SourceError: pass
+        migrated = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime((d["pair_created_ms"] or 0) / 1000)) if d["pair_created_ms"] else None
+        # creator balance at migration is unknown for a coin the desk never saw: layer 3 stays red "no data: dev"
+        conn.execute("INSERT INTO coins(mint,name,symbol,pool,migrated_at,creator) VALUES(?,?,?,?,?,?)",
+                     (mint, d["name"], d["symbol"], d["pool"], migrated, creator))
+    return {"agent": "scanner", "mint": mint, "name": d["name"], "symbol": d["symbol"], "pool": d["pool"],
+            "liquidityUsd": d["liquidity_usd"], "top10Pct": None, "h1ChangePct": d["chg_h1"], "ageMin": None,
+            "verdict": "adhoc", "reason": None, "ts": db.now_iso()}
+
 def layer8_kills_tonight(conn) -> int:
     """For the morning Page: coins killed by 'no data: delegations' tonight."""
     return conn.execute("SELECT COUNT(DISTINCT mint) FROM audits WHERE layer=8 AND pass=0 AND value_text='no data: delegations' AND ts>=?",
@@ -203,6 +230,7 @@ async def run(conn, bus, src):
     async def work():
         while True:
             scan = await bus.get("auditor")
+            await wait_unpaused(conn, NAME)
             try: await a.audit(scan)
             except Exception as e: log.exception("audit error mint=%s: %s", scan.get("mint"), e)
     await asyncio.gather(hb(), work())

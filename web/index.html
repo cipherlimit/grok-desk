@@ -3,48 +3,28 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="robots" content="noindex,nofollow">
-<meta name="referrer" content="no-referrer">
 <meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="theme-color" content="#0b0b0f">
-<link rel="manifest" href="manifest.webmanifest">
-<title>Grok Desk</title>
-<style>
-  :root{color-scheme:dark}
-  body{margin:0;font-family:-apple-system,system-ui,sans-serif;background:#0b0b0f;color:#eee;
-       padding:calc(env(safe-area-inset-top) + 24px) 20px 24px}
-  .mode{display:inline-block;padding:3px 10px;border-radius:999px;background:#3a2f00;color:#ffcc33;font-size:12px;font-weight:600}
-  .bal{font-size:44px;font-weight:700;margin:12px 0 4px}
-  .muted{color:#888;font-size:13px}
-  .err{color:#ff6b6b}
-</style>
+<meta name="apple-mobile-web-app-title" content="Grok Bot">
+<meta name="theme-color" content="#000000">
+<meta name="referrer" content="no-referrer">
+<title>Grok Bot</title>
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="stylesheet" href="app.css">
 </head>
 <body>
-  <span class="mode" id="mode">…</span>
-  <div class="bal" id="bal">—</div>
-  <div class="muted" id="upd">Loading…</div>
-<script>
-(function(){
-  // The data path lives only in the URL fragment (#d=...), which browsers never send to the server.
-  var m = location.hash.match(/(?:^#|&)d=([A-Za-z0-9_-]{32,})/);
-  var key = m ? m[1] : localStorage.getItem("desk_d");
-  if (m) { localStorage.setItem("desk_d", m[1]); history.replaceState(null, "", location.pathname); }
-  var $ = function(id){ return document.getElementById(id); };
-  if (!key) { $("upd").textContent = "Open the link from Telegram to connect."; $("upd").className = "muted err"; return; }
-  function load(){
-    fetch("d/" + key + "/state.json?t=" + Date.now(), {cache: "no-store"})
-      .then(function(r){ if (!r.ok) throw new Error(r.status); return r.json(); })
-      .then(function(s){
-        $("mode").textContent = s.mode;
-        $("bal").textContent = "$" + Number(s.balance).toFixed(2);
-        $("upd").textContent = "Updated " + new Date(s.ts).toLocaleTimeString() + " · refreshes every few minutes";
-        $("upd").className = "muted";
-      })
-      .catch(function(e){ $("upd").textContent = "No data (" + e.message + ")"; $("upd").className = "muted err"; });
-  }
-  load(); setInterval(load, 60000);
-})();
-</script>
+<div id="offline" class="offline" hidden></div>
+<main id="view"></main>
+<nav class="tabbar" id="tabbar">
+  <a href="#/home" data-tab="home"><svg viewBox="0 0 24 24"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg><span>Home</span></a>
+  <a href="#/agents" data-tab="agents"><svg viewBox="0 0 24 24"><circle cx="8" cy="8" r="3"/><circle cx="16" cy="8" r="3"/><path d="M2 20c0-3.3 2.7-6 6-6s6 2.7 6 6M10 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/></svg><span>Agents</span></a>
+  <a href="#/activity" data-tab="activity"><svg viewBox="0 0 24 24"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg><span>Activity</span></a>
+  <a href="#/account" data-tab="account"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg><span>Account</span></a>
+</nav>
+<div id="toast" class="toast" hidden></div>
+<script src="chart.js"></script>
+<script src="app.js"></script>
 </body>
 </html>

@@ -129,6 +129,8 @@ PRICE_WRITERS = {
     "api": 60,       # coins pushed/audited/opened in the app tonight that neither covers
 }
 
+LAST_PAIR: dict[str, dict] = {}   # latest DexScreener stats per mint from the same batches (Coin screen)
+
 def write_price_batch(c, writer: str, pairs: list[dict], ts: str | None = None) -> int:
     """Write one DexScreener /tokens/v1/solana/{mints} response (list of pairs) to db.prices.
     One row per mint (the pumpswap pair, else the first pair for that mint), one shared ts.
@@ -148,6 +150,10 @@ def write_price_batch(c, writer: str, pairs: list[dict], ts: str | None = None) 
             best[mint] = p
     rows = []
     for mint, p in best.items():
+        LAST_PAIR[mint] = {"ts": ts, "name": (p.get("baseToken") or {}).get("name"), "symbol": (p.get("baseToken") or {}).get("symbol"),
+                           "market_cap": p.get("marketCap"), "liquidity_usd": (p.get("liquidity") or {}).get("usd"),
+                           "volume_h24": (p.get("volume") or {}).get("h24"), "pair_created_ms": p.get("pairCreatedAt"),
+                           "price_change_h24": (p.get("priceChange") or {}).get("h24")}
         price = p.get("priceUsd")
         rows.append((mint, ts, float(price) if price is not None else None, (p.get("volume") or {}).get("m5")))
     c.execute("BEGIN")
@@ -159,11 +165,26 @@ def write_price_batch(c, writer: str, pairs: list[dict], ts: str | None = None) 
     return len(rows)
 
 # ---- live settings ---------------------------------------------------------
+_REPORT_TIME = ["08:00"]   # night boundary, refreshed from settings on every settings_all()
+
 def seed_settings(c):
-    from config import DEFAULTS
-    have = {r["key"] for r in c.execute("SELECT key FROM settings")}
+    """Insert missing STEP 10 defaults; migrate pre-STEP-10 key names (values kept, change_log who=system)."""
+    from config import DEFAULTS, RENAMED, RETIRED
+    rows = {r["key"]: r["value"] for r in c.execute("SELECT key,value FROM settings")}
+    for old, new in RENAMED.items():
+        if old in rows:
+            c.execute("DELETE FROM settings WHERE key=?", (old,))
+            c.execute("INSERT INTO change_log(ts,key,old,new,who) VALUES(?,?,?,?,?)",
+                      (now_iso(), old, rows[old], f"renamed to {new}", "system"))
+            if new not in rows:
+                c.execute("INSERT INTO settings(key,value,updated_at) VALUES(?,?,?)", (new, rows[old], now_iso()))
+                rows[new] = rows[old]
+    for old in RETIRED:
+        if old in rows:
+            c.execute("DELETE FROM settings WHERE key=?", (old,))
+            c.execute("INSERT INTO change_log(ts,key,old,new,who) VALUES(?,?,?,?,?)", (now_iso(), old, rows[old], None, "system"))
     for k, v in DEFAULTS.items():
-        if k not in have: set_setting(c, k, v, who="default")
+        if k not in rows: set_setting(c, k, v, who="default")
 
 def settings_all(c) -> dict:
     """DEFAULTS overlaid with db.settings; call on every use so changes apply live."""
@@ -172,9 +193,10 @@ def settings_all(c) -> dict:
     for r in c.execute("SELECT key,value FROM settings"):
         try: s[r["key"]] = json.loads(r["value"])
         except ValueError: pass
+    _REPORT_TIME[0] = s.get("desk.report_time") or "08:00"
     return s
 
-# ---- nights: 12:00 -> 12:00 Europe/Budapest --------------------------------
+# ---- nights: settings.report_time -> next report_time, Europe/Budapest -------
 import datetime as _dt
 from zoneinfo import ZoneInfo as _Z
 
@@ -182,9 +204,11 @@ def _tz():
     from config import LOCAL_TZ
     return _Z(LOCAL_TZ)
 
-def night_bounds(now: _dt.datetime | None = None, start_hour: int = 12) -> tuple[str, str]:
+def night_bounds(now: _dt.datetime | None = None, report_time: str | None = None) -> tuple[str, str]:
+    """The night that contains `now`: [report_time yesterday-or-today, next report_time)."""
+    hh, mm = map(int, (report_time or _REPORT_TIME[0]).split(":"))
     now = (now or _dt.datetime.now(_dt.timezone.utc)).astimezone(_tz())
-    start = now.replace(hour=start_hour, minute=0, second=0, microsecond=0)
+    start = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
     if now < start: start -= _dt.timedelta(days=1)
     end = start + _dt.timedelta(days=1)
     f = lambda d: d.astimezone(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -206,7 +230,29 @@ def waiting_room(c, room_max_min: float, now_ts: float | None = None) -> list[sq
     now_ts = now_ts or time.time()
     cutoff = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now_ts - room_max_min * 60 - 120))
     return list(c.execute("SELECT * FROM coins WHERE migrated_at >= ? AND mint NOT IN (SELECT mint FROM scans) "
+                          "AND mint NOT IN (SELECT mint FROM audits) "
                           "ORDER BY migrated_at", (cutoff,)))
 
 def open_positions(c) -> list[sqlite3.Row]:
     return list(c.execute("SELECT * FROM positions WHERE closed_at IS NULL ORDER BY id"))
+
+def full_paper_night(c) -> tuple[bool, str]:
+    """STEP 11: LIVE needs >= 1 full PAPER night in the db: a finished night window
+    (report_time -> report_time) that the balance rows cover from start to end, with no LIVE in it."""
+    first = c.execute("SELECT MIN(ts) FROM balance").fetchone()[0]
+    if not first: return False, "no PAPER data yet"
+    cur_start, _ = night_bounds()
+    prev_start = night_bounds(_dt.datetime.fromtimestamp(parse_iso(cur_start) - 60, _dt.timezone.utc))[0]
+    if first <= prev_start:
+        rows = c.execute("SELECT COUNT(*) FROM balance WHERE ts>=? AND ts<?", (prev_start, cur_start)).fetchone()[0]
+        live = c.execute("SELECT COUNT(*) FROM change_log WHERE key='desk.mode' AND new LIKE '%LIVE%' AND ts>=? AND ts<?",
+                         (prev_start, cur_start)).fetchone()[0]
+        if rows >= 20 * 60 and not live: return True, "ok"
+        return False, "last night was not a full PAPER night (desk down or LIVE in it)"
+    # first night that starts after the first balance row
+    _, first_end = night_bounds(_dt.datetime.fromtimestamp(parse_iso(first), _dt.timezone.utc))
+    _, ends = night_bounds(_dt.datetime.fromtimestamp(parse_iso(first_end) + 60, _dt.timezone.utc))
+    return False, f"needs 1 full PAPER night first: the first one ends {local_date(ends)} {local_hhmm(ends)}"
+
+def local_date(iso: str) -> str:
+    return _dt.datetime.fromtimestamp(parse_iso(iso), _dt.timezone.utc).astimezone(_tz()).strftime("%d %b")

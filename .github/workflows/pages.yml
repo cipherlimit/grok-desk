@@ -20,22 +20,27 @@ jobs:
         env:
           DATA_PATH: ${{ secrets.DATA_PATH }}
           DATA_KEY: ${{ secrets.DATA_KEY }}
-          BLOB: ${{ github.event.client_payload.blob }}
         run: |
           set -euo pipefail
           mkdir -p _site
           cp -r web/. _site/
           touch _site/.nojekyll
-          if [ -n "${BLOB:-}" ]; then
+          # the encrypted blob is read from the event file, never inlined into the script
+          jq -r '.client_payload.blob // empty' "$GITHUB_EVENT_PATH" > blob.b64
+          if [ -s blob.b64 ]; then
             test ${#DATA_PATH} -ge 32
-            mkdir -p "_site/d/${DATA_PATH}"
-            printf '%s' "$BLOB" | base64 -d \
+            D="_site/d/${DATA_PATH}"
+            mkdir -p "$D" tmpdata
+            base64 -d blob.b64 \
               | openssl enc -d -aes-256-cbc -pbkdf2 -iter 100000 -pass env:DATA_KEY \
-              | tar -xz -C "_site/d/${DATA_PATH}" --no-same-owner state.json chart.json activity.json
-            echo "data files: $(ls "_site/d/${DATA_PATH}" | wc -l)"
+              | tar -xz -C tmpdata --no-same-owner --no-same-permissions
+            # only plain .json files, no links, no dot files
+            (cd tmpdata && find . -type f -name '*.json' ! -path '*/.*' -exec cp --parents {} "../$D/" \;)
+            echo "data files: $(find "$D" -type f | wc -l)"
           else
             echo "no data payload (manual run): shell only"
           fi
+          rm -rf blob.b64 tmpdata
       - uses: actions/upload-pages-artifact@v3
         with:
           path: _site

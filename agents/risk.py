@@ -3,7 +3,7 @@ Never places an order: pushes [Sell on FOMO] (links.coin_url) + [Sold]."""
 import asyncio, time
 import db, fees, links, onchain, telegram
 from sources import DEX_BATCH, RateLimited, SourceError
-from agents.base import agent_logger
+from agents.base import agent_logger, paused
 
 NAME = "risk"
 log = agent_logger(NAME)
@@ -27,7 +27,7 @@ def evaluate(pos: dict, price: float, hours_open: float, s: dict) -> tuple[dict,
     p["peak_price"] = max(p["peak_price"], price)
     e = p["entry_price"]
     if price <= p["stop_price"]: return p, "stop"
-    if price >= e * (1 + s["risk.trail_on_pct"] / 100): p["trail_active"] = 1
+    if price >= e * (1 + s["risk.trail_start_pct"] / 100): p["trail_active"] = 1
     if p["trail_active"] and price <= p["peak_price"] * (1 - s["risk.trail_pct"] / 100): return p, "trail"
     if hours_open >= s["risk.timeout_h"] and price < e * (1 + s["risk.timeout_min_gain_pct"] / 100): return p, "timeout"
     return p, None
@@ -46,7 +46,7 @@ def activity_row(reason, name, pnl, pct, stop_pct):
     if reason == "stop":
         return "stopped", f"Stopped {name}", f"Risk · -{fmt_pct(stop_pct)}% stop", f"-${abs(pnl):.2f}"
     sub = {"trail": "Risk · trailing stop", "timeout": "Risk · dead money", "pulled": "Risk · liquidity pulled"}[reason]
-    return "sold", f"Sold {name}", sub, f"{signed_usd(pnl)} / {signed_pct(pct)}"
+    return "sold", f"Sold {name}", sub, f"{signed_usd(pnl)} · {signed_pct(pct)}"
 
 class Risk:
     def __init__(self, conn, bus, src):
@@ -66,7 +66,7 @@ class Risk:
         s = db.settings_all(self.c)
         rows = [dict(r) for r in db.open_positions(self.c)]
         live = [r for r in rows if r["exit_reason"] is None]       # "exiting" ones wait for [Sold]
-        if not live: return 0
+        if not live: return 0                                      # paused only matters with nothing open
         mints = sorted({r["mint"] for r in live})
         pairs, failed = [], False
         for i in range(0, len(mints), DEX_BATCH):
@@ -115,7 +115,7 @@ class Risk:
 
     async def exit(self, pos, price, reason, s, name):
         pid, mint, mode = pos["id"], pos["mint"], pos["mode"]
-        pnl, fee = fees.paper_pnl(pos["size_usd"], pos["entry_price"], price)
+        pnl, fee = fees.paper_pnl(pos["size_usd"], pos["entry_price"], price, s["desk.fees_ref_discount"])
         pct = 100 * pnl / pos["size_usd"]
         stop_pct = pos_stop_pct(pos["entry_price"], pos["stop_price"])
         link = links.coin_url(mint, "solana")
@@ -124,7 +124,7 @@ class Risk:
         if mode == "PAPER":
             self.c.execute("UPDATE positions SET closed_at=?, exit_price=?, exit_reason=?, pnl_usd=?, fees_usd=?, peak_price=? WHERE id=?",
                            (ts, price, reason, round(pnl, 6), fee, pos["peak_price"], pid))
-            db.add_balance(self.c, (db.last_balance(self.c) or s["paper_start_stack"]) + pnl)
+            db.add_balance(self.c, (db.last_balance(self.c) or s["desk.paper_start_stack"]) + pnl)
             kind, title, sub, value = activity_row(reason, name, pnl, pct, stop_pct)
             db.activity(self.c, kind, NAME, title, sub, value, mint)
         else:
@@ -142,7 +142,7 @@ class Risk:
         while True:
             s = db.settings_all(self.c)
             for pid, e in list(self.exiting.items()):
-                if not e["repushed"] and time.time() - e["since"] >= s["risk.sold_wait_min"] * 60:
+                if not e["repushed"] and time.time() - e["since"] >= s["risk.confirm_window_min"] * 60:
                     e["repushed"] = True
                     await telegram.send(e["text"] + "\nstill open", self.sell_buttons(pid, e["out"]["mint"]))
             await asyncio.sleep(5)

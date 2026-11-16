@@ -6,7 +6,7 @@ import httpx
 import db, fields, onchain
 from config import secret
 from sources import SourceError, with_retry
-from agents.base import agent_logger
+from agents.base import agent_logger, wait_unpaused
 
 NAME = "analyst"
 log = agent_logger(NAME)
@@ -21,15 +21,15 @@ QUESTIONS = {
 def clamp(x, lo=0.0, hi=1.0): return max(lo, min(hi, x))
 
 def rules_answers(dex: dict, bundled_wallets: int, s: dict) -> dict:
-    alive = clamp((dex.get("vol_h1") or 0) / s["analyst.rules.vol_h1_full"])
-    organic = clamp((dex.get("buys_h1") or 0) / s["analyst.rules.buys_h1_full"])
-    if bundled_wallets >= s["analyst.rules.bundle_wallets"]:
-        organic *= s["analyst.rules.bundle_penalty"]
+    alive = clamp((dex.get("vol_h1") or 0) / s["analyst.rules.alive_volume_h1"])
+    organic = clamp((dex.get("buys_h1") or 0) / s["analyst.rules.organic_buys_h1"])
+    if bundled_wallets >= s["analyst.rules.bundled_wallets"]:
+        organic *= s["analyst.rules.bundled_penalty"]
     m5 = dex.get("chg_m5") or 0
-    if m5 <= -s["analyst.rules.flush_pct"] and (dex.get("buys_m5") or 0) >= (dex.get("sells_m5") or 0): flush = 1.0
+    if m5 <= -s["analyst.rules.flush_drop_m5_pct"] and (dex.get("buys_m5") or 0) >= (dex.get("sells_m5") or 0): flush = 1.0
     elif m5 < 0: flush = 0.5
     else: flush = 0.0
-    chase = clamp((dex.get("chg_h1") or 0) / s["analyst.rules.chase_h1_full"])
+    chase = clamp((dex.get("chg_h1") or 0) / s["analyst.rules.chase_h1_pct"])
     return {"alive_6h": alive, "organic": organic, "flush": flush, "chase": chase}
 
 def valid(a) -> bool:
@@ -37,11 +37,11 @@ def valid(a) -> bool:
 
 def gate(a: dict, s: dict) -> tuple[int, bool, list[str]]:
     failed = []
-    if a["alive_6h"] < s["analyst.alive_6h_min"]: failed.append(f"alive_6h {a['alive_6h']:.2f}")
-    if a["organic"] < s["analyst.organic_min"]: failed.append(f"organic {a['organic']:.2f}")
-    if a["chase"] > s["analyst.chase_max"]: failed.append(f"chase {a['chase']:.2f}")
+    if a["alive_6h"] < s["analyst.min_alive_6h"]: failed.append(f"alive_6h {a['alive_6h']:.2f}")
+    if a["organic"] < s["analyst.min_organic"]: failed.append(f"organic {a['organic']:.2f}")
+    if a["chase"] > s["analyst.max_chase"]: failed.append(f"chase {a['chase']:.2f}")
     score = round(100 * (a["alive_6h"] + a["organic"] + a["flush"] + (1 - a["chase"])) / 4)
-    if score < s["analyst.score_min"]: failed.append(f"score {score}")
+    if score < s["analyst.min_score"]: failed.append(f"score {score}")
     return score, not failed, failed
 
 def bundled_from(auditor: dict) -> int:
@@ -101,7 +101,7 @@ class Analyst:
         mint, s = scan["mint"], db.settings_all(self.c)
         if self.c.execute("SELECT 1 FROM verdicts WHERE mint=?", (mint,)).fetchone():
             log.info("already asked, never re-asks mint=%s", mint); return None
-        rules = s["analyst_mode"] == "rules"
+        rules = s["analyst.mode"] == "rules"
         model, tokens, answers, err, d = ("rules" if rules else "jev-latest"), 0, None, "", {}
         try:
             pairs = await with_retry(lambda: self.src.dex_tokens([mint]), 2, s["analyst.retry_after_s"])
@@ -135,7 +135,7 @@ class Analyst:
                  mint, shash, a.get("alive_6h"), a.get("organic"), a.get("flush"), a.get("chase"), score,
                  "pass" if passed else "reject", tokens)
         if passed:
-            await self.bus.put("executor", {"analyst": out, "scanner": scan, "price_at_analyst": d.get("price_usd"),
+            await self.bus.put("executor", {"analyst": out, "scanner": scan, "price_at_analyst": d.get("price_usd"), "auditor_checked": aud.get("layersChecked", 8),
                                             "name": d.get("name") or scan.get("name")})
         else:
             label = "Analyst (rules)" if rules else "Analyst"
@@ -145,12 +145,13 @@ class Analyst:
 
 async def run(conn, bus, src):
     a = Analyst(conn, bus, src)
-    log.info("start analyst_mode=%s", db.settings_all(conn)["analyst_mode"])
+    log.info("start analyst_mode=%s", db.settings_all(conn)["analyst.mode"])
     async def hb():
         while True: db.heartbeat(conn, NAME); await asyncio.sleep(15)
     async def work():
         while True:
             m = await bus.get("analyst")
+            await wait_unpaused(conn, NAME)
             try: await a.analyze(m)
             except Exception as e: log.exception("analyst error: %s", e)
     await asyncio.gather(hb(), work())
