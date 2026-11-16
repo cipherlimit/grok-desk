@@ -60,6 +60,7 @@ DEFAULTS = {
     "scanner.top10_max_pct": 25,
     "scanner.h1_max_pct": 80,
     "scanner.min_age_min": 10,
+    "scanner.judge_from_age_min": 10,   # user 2026-11-16: kills judged only from this pool age
     "scanner.room_max_min": 60,
     "scanner.dex_max_rpm": 250,
     "scanner.runner_h24_pct": 300,

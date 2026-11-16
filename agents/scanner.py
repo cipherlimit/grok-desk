@@ -32,7 +32,9 @@ def fmt_k(usd: float) -> str:
 
 def decide(s: dict, liq, top10_fn_result, h1, copycat, age_min) -> tuple[str | None, str | None, bool]:
     """Pure kill/pass logic in spec order. top10_fn_result: float, or None = unknown (wait).
-    Returns (verdict, reason, needs_top10) ; verdict None = keep waiting."""
+    Returns (verdict, reason, needs_top10) ; verdict None = keep waiting.
+    User rule 2026-11-16: no kill is judged before pool age >= [10] min (scanner.judge_from_age_min)."""
+    if age_min < s["scanner.judge_from_age_min"]: return None, None, False
     if liq < s["scanner.min_liq_usd"]: return "kill", f"liq {fmt_k(liq)}", False
     if top10_fn_result is None: return None, None, True
     if top10_fn_result > s["scanner.top10_max_pct"]: return "kill", f"top 10 hold {top10_fn_result:.0f}%", False

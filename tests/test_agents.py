@@ -45,6 +45,27 @@ def test_scanner_kill_order(conn):
     assert scanner.decide(s, 50_000, 20, 10, None, 9)[:2] == (None, None)                 # too young: waits
     assert scanner.decide(s, 50_000, None, 10, None, 30) == (None, None, True)            # top 10 unknown: waits
 
+def test_scanner_no_kill_before_10_min(conn):
+    s = S(conn)
+    assert s["scanner.judge_from_age_min"] == 10
+    for age in (0, 5, 9):
+        assert scanner.decide(s, 4, 90, 500, "X", age) == (None, None, False)            # young: never killed
+    assert scanner.decide(s, 4, 90, 500, "X", 10)[:2] == ("kill", "liq $4")
+    db.set_setting(conn, "scanner.judge_from_age_min", 3, who="test")
+    assert scanner.decide(S(conn), 4, 90, 500, "X", 5)[:2] == ("kill", "liq $4")         # read live
+
+def test_scanner_young_coin_polled_not_killed_then_judged(conn):
+    conn.execute("INSERT INTO coins(mint,migrated_at) VALUES(?,?)", (PIKA, ago(3)))
+    young = pika_pair(pairCreatedAt=int((time.time() - 180) * 1000))               # liq $4.47, 3 min old
+    src = FakeSrc(dex=Seq([young], raw("dexscreener_pair.json")), **_rpc_ok())
+    sc = scanner.Scanner(conn, Bus(), src)
+    run(sc.cycle())
+    assert conn.execute("SELECT COUNT(*) FROM scans").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM prices").fetchone()[0] == 1              # prices still written
+    assert "getTokenLargestAccounts" not in src.calls                                   # no top-10 RPC while young
+    run(sc.cycle())                                                                     # raw pair is hours old
+    assert conn.execute("SELECT reason FROM scans").fetchone()[0] == "liq $4"
+
 def test_copycat_normalisation():
     runners = {"R1": ("Pepe", "PEPE")}
     assert scanner.copycat_of("PEPE 2.0 🐸", "PEPE2", "M", runners) == "Pepe"
