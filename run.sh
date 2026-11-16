@@ -1,10 +1,16 @@
 #!/usr/bin/env bash
 # Restart the desk and the plan B publisher as session-leader daemons.
 # nohup alone is not enough on this box: the processes stay in the launching
-# shell's session and in the /agent cgroup, so they freeze (heartbeats go
-# stale) when the agent or desk-health routine ends. setsid gives them their
-# own session; moving them into /sys/fs/cgroup/background keeps them
-# scheduled after the agent session is gone.
+# shell's session and in the /agent cgroup. setsid gives them their own
+# session; moving them into /sys/fs/cgroup/background keeps them scheduled
+# after the *agent process* ends, as long as the box itself is still running.
+#
+# LIMITATION: this is an anyrun pod. When no agent or routine session is
+# active, the platform hibernates the whole VM (see /var/run/anyrun-hibernate-hook
+# and sand-host "box was paused or frozen"). Guest processes, including those
+# in /background, do not run during hibernation. There is no in-box way to
+# stay awake. A more frequent desk-health routine can only wake the box for
+# the length of that run.
 cd "$(dirname "$0")"
 pkill -f "\.venv/bin/python main.py" || true
 pkill -f "\.venv/bin/python publisher.py" || true
