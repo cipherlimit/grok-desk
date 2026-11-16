@@ -17,3 +17,4 @@ fields_mapping.md
 *.key
 nohup.out
 backups/
+spec/

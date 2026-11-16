@@ -140,7 +140,11 @@ def write_price_batch(c, writer: str, pairs: list[dict], ts: str | None = None) 
     for p in pairs:
         mint = (p.get("baseToken") or {}).get("address")
         if not mint: continue
-        if mint not in best or (p.get("dexId") == "pumpswap" and best[mint].get("dexId") != "pumpswap"):
+        liq = lambda q: ((q.get("liquidity") or {}).get("usd") or 0)
+        cur = best.get(mint)
+        if (cur is None
+                or (p.get("dexId") == "pumpswap" and cur.get("dexId") != "pumpswap")
+                or (p.get("dexId") == cur.get("dexId") == "pumpswap" and liq(p) > liq(cur))):
             best[mint] = p
     rows = []
     for mint, p in best.items():
@@ -153,3 +157,56 @@ def write_price_batch(c, writer: str, pairs: list[dict], ts: str | None = None) 
     except Exception:
         c.execute("ROLLBACK"); raise
     return len(rows)
+
+# ---- live settings ---------------------------------------------------------
+def seed_settings(c):
+    from config import DEFAULTS
+    have = {r["key"] for r in c.execute("SELECT key FROM settings")}
+    for k, v in DEFAULTS.items():
+        if k not in have: set_setting(c, k, v, who="default")
+
+def settings_all(c) -> dict:
+    """DEFAULTS overlaid with db.settings; call on every use so changes apply live."""
+    from config import DEFAULTS
+    s = dict(DEFAULTS)
+    for r in c.execute("SELECT key,value FROM settings"):
+        try: s[r["key"]] = json.loads(r["value"])
+        except ValueError: pass
+    return s
+
+# ---- nights: 12:00 -> 12:00 Europe/Budapest --------------------------------
+import datetime as _dt
+from zoneinfo import ZoneInfo as _Z
+
+def _tz():
+    from config import LOCAL_TZ
+    return _Z(LOCAL_TZ)
+
+def night_bounds(now: _dt.datetime | None = None, start_hour: int = 12) -> tuple[str, str]:
+    now = (now or _dt.datetime.now(_dt.timezone.utc)).astimezone(_tz())
+    start = now.replace(hour=start_hour, minute=0, second=0, microsecond=0)
+    if now < start: start -= _dt.timedelta(days=1)
+    end = start + _dt.timedelta(days=1)
+    f = lambda d: d.astimezone(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return f(start), f(end)
+
+def local_today(now: _dt.datetime | None = None) -> str:
+    return (now or _dt.datetime.now(_dt.timezone.utc)).astimezone(_tz()).strftime("%Y-%m-%d")
+
+def local_hhmm(iso: str | None = None) -> str:
+    d = _dt.datetime.now(_dt.timezone.utc) if not iso else _dt.datetime.strptime(iso, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=_dt.timezone.utc)
+    return d.astimezone(_tz()).strftime("%H:%M")
+
+def parse_iso(iso: str) -> float:
+    return _dt.datetime.strptime(iso, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=_dt.timezone.utc).timestamp()
+
+# ---- shared queries ----------------------------------------------------------
+def waiting_room(c, room_max_min: float, now_ts: float | None = None) -> list[sqlite3.Row]:
+    """Coins migrated within the last [60] min with no Scanner decision yet."""
+    now_ts = now_ts or time.time()
+    cutoff = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now_ts - room_max_min * 60 - 120))
+    return list(c.execute("SELECT * FROM coins WHERE migrated_at >= ? AND mint NOT IN (SELECT mint FROM scans) "
+                          "ORDER BY migrated_at", (cutoff,)))
+
+def open_positions(c) -> list[sqlite3.Row]:
+    return list(c.execute("SELECT * FROM positions WHERE closed_at IS NULL ORDER BY id"))
