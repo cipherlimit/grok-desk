@@ -96,7 +96,8 @@ DEFAULTS = {
     "executor.size_pct": 8,
     "executor.liq_cap_pct": 2,
     "executor.min_usd": 47.50,
-    "below_min": "skip",            # "bump" | "skip"; prompt gives no default, stricter = skip
+    "below_min_paper": "trade",     # user 2026-11-16: PAPER trades a size under [$47.50] as-is
+    "below_min_live": "skip",       # user 2026-11-16: LIVE skips "under $47.50"   (values: trade|bump|skip)
     "executor.liq_drop_max_pct": 20,
     "executor.price_run_max_pct": 15,
     "executor.bought_wait_min": 5,

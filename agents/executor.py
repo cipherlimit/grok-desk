@@ -11,8 +11,9 @@ log = agent_logger(NAME)
 def fmt_pct(x: float) -> str:
     return f"{x:.1f}".rstrip("0").rstrip(".")
 
-def size_for(stack: float, open_usd: float, liquidity_usd: float, s: dict) -> tuple[float | None, str, float, str | None]:
-    """Returns (final size | None, cap hit, raw size, skip reason)."""
+def size_for(stack: float, open_usd: float, liquidity_usd: float, s: dict, mode: str = "PAPER") -> tuple[float | None, str, float, str | None]:
+    """Returns (final size | None, cap hit, raw size, skip reason).
+    Below [$47.50]: mode-aware setting below_min_paper / below_min_live = trade | bump | skip."""
     free = stack - open_usd
     raw = stack * s["executor.size_pct"] / 100
     size, cap = raw, "size_pct"
@@ -20,7 +21,10 @@ def size_for(stack: float, open_usd: float, liquidity_usd: float, s: dict) -> tu
     if liq_cap < size: size, cap = liq_cap, "liquidity"
     mn = s["executor.min_usd"]
     if size < mn:
-        if s["below_min"] == "bump":
+        rule = s["below_min_paper"] if mode == "PAPER" else s["below_min_live"]
+        if rule == "trade":
+            cap = f"{cap}, under min traded"
+        elif rule == "bump":
             size, cap = mn, "bump"
         else:
             return None, cap, raw, f"under ${mn:.2f}"
@@ -74,7 +78,7 @@ class Executor:
             pair = None
         d = fields.dex_read(pair) if pair else {}
         price, liq = d.get("price_usd"), d.get("liquidity_usd")
-        size, cap, raw, why = size_for(stack, open_usd, liq, s)
+        size, cap, raw, why = size_for(stack, open_usd, liq, s, mode)
         if why: return self._skip(mint, mode, link, why, stack, raw, cap)
         if not price: return self._skip(mint, mode, link, "no price", stack, raw, cap)
         why = recheck(liq, scan.get("liquidityUsd"), price, msg.get("price_at_analyst"), s)
