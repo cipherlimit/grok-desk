@@ -14,6 +14,5 @@ The desk never places orders: it pushes Buy/Sell buttons (links.coin_url, r=savi
 - App data refreshes every ~3-5 min (deploy time + Pages caching). Pushes go through Telegram instantly.
 
 ## Run
-    .venv/bin/python main.py        # desk
-    .venv/bin/python publisher.py   # plan B publisher
+    ./run.sh                        # desk + publisher (setsid, background cgroup)
     .venv/bin/python -m pytest tests
