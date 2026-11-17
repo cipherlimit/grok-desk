@@ -2,7 +2,7 @@
 #   .\tools\install_windows.ps1            venv + requirements + tests + GrokDesk task (DISABLED) + AC power
 # Enable/start the task at cutover with:  Enable-ScheduledTask GrokDesk; Start-ScheduledTask GrokDesk
 param([switch]$SkipTests, [switch]$SkipPower)
-$ErrorActionPreference = 'Stop'
+$ErrorActionPreference = 'Continue'   # native stderr (pip warnings) must not abort under PS 5.1
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location -LiteralPath $root
 $env:PYTHONUTF8 = '1'
