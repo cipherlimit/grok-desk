@@ -40,7 +40,7 @@ if (-not $SkipPower) {
     powercfg /setacvalueindex SCHEME_CURRENT SUB_BUTTONS LIDACTION 0
     powercfg /setactive SCHEME_CURRENT
     foreach ($q in @('SUB_SLEEP STANDBYIDLE', 'SUB_SLEEP HIBERNATEIDLE', 'SUB_BUTTONS LIDACTION')) {
-        $o = powercfg /q SCHEME_CURRENT $q.Split(' ')[0] $q.Split(' ')[1]
+        $o = powercfg /qh SCHEME_CURRENT $q.Split(' ')[0] $q.Split(' ')[1]
         $v = @($o | Select-String ':\s*0x[0-9a-fA-F]+\s*$' | ForEach-Object { $_.ToString().Split(':')[-1].Trim() })
         "power $q  AC=$($v[-2]) DC=$($v[-1])"
     }
