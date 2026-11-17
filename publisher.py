@@ -2,7 +2,7 @@
 (AES-256-CBC, PBKDF2, openssl), send as repository_dispatch to the Pages workflow.
 The workflow decrypts with the DATA_KEY Actions secret and places files under
 /d/{DATA_PATH}/ (DATA_PATH is an Actions secret). Nothing data-related ever enters git."""
-import base64, io, json, os, subprocess, sys, tarfile, tempfile, time
+import base64, hashlib, io, json, os, shutil, subprocess, sys, tarfile, tempfile, time
 from config import OUT_DIR, LOG_DIR, secret
 from agents.base import agent_logger
 
@@ -11,20 +11,33 @@ EVERY = int(os.environ.get("PUBLISH_EVERY_S", "180"))
 MAX_BLOB = 60_000          # keep repository_dispatch payloads small
 log = agent_logger("publisher")
 
+WITH_REPORT = False       # --with-report: also ship the newest night_report_*.json
+
 def _files():
-    """Every plan B JSON under output/ (recursive), except reports and temp files."""
+    """Every plan B JSON under output/ (recursive), except reports and temp files.
+    With WITH_REPORT, the newest night_report_<date>.json rides along (for the night-report routine)."""
     out = []
     for p in sorted(OUT_DIR.rglob("*.json")):
         rel = p.relative_to(OUT_DIR).as_posix()
         if rel.startswith("night_report") or "/." in rel: continue
         out.append((rel, p))
+    if WITH_REPORT:
+        reps = sorted(OUT_DIR.glob("night_report_*.json"))
+        if reps: out.append((reps[-1].name, reps[-1]))
     return out
 
 def _encrypt(raw: bytes) -> str:
-    env = dict(os.environ, DATA_KEY=secret("DATA_KEY"))
-    enc = subprocess.run(["openssl", "enc", "-aes-256-cbc", "-pbkdf2", "-iter", "100000", "-salt",
-                          "-pass", "env:DATA_KEY"], input=raw, capture_output=True, env=env, check=True).stdout
-    return base64.b64encode(enc).decode()
+    """Same bytes format as `openssl enc -aes-256-cbc -pbkdf2 -iter 100000 -salt -pass env:DATA_KEY`
+    (Salted__ + 8-byte salt + AES-256-CBC/PKCS7, key+iv = PBKDF2-HMAC-SHA256). Pure Python, so the
+    desk needs no openssl binary (Windows)."""
+    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+    from cryptography.hazmat.primitives import padding
+    salt = os.urandom(8)
+    kiv = hashlib.pbkdf2_hmac("sha256", secret("DATA_KEY").encode(), salt, 100000, 48)
+    padder = padding.PKCS7(128).padder()
+    data = padder.update(raw) + padder.finalize()
+    enc = Cipher(algorithms.AES(kiv[:32]), modes.CBC(kiv[32:])).encryptor()
+    return base64.b64encode(b"Salted__" + salt + enc.update(data) + enc.finalize()).decode()
 
 def _tar(files) -> bytes:
     buf = io.BytesIO()
@@ -60,6 +73,25 @@ def publish_once() -> bool:
     if len(blob) > MAX_BLOB:
         log.error("blob too big: %d bytes", len(blob)); return False
     body = {"event_type": "publish", "client_payload": {"blob": blob, "ts": int(time.time())}}
+    ok, err = _dispatch(body)
+    log.info("dispatch %s blob=%dB %s", "ok" if ok else "FAIL", len(blob), "" if ok else err[:300])
+    return ok
+
+def _dispatch(body: dict) -> tuple[bool, str]:
+    """GH_TOKEN (env or secrets file) -> GitHub REST directly; otherwise the gh CLI login.
+    The token is only ever sent in the Authorization header, never logged."""
+    tok = secret("GH_TOKEN")
+    if tok:
+        import httpx
+        try:
+            r = httpx.post(f"https://api.github.com/repos/{REPO}/dispatches", json=body, timeout=30,
+                           headers={"Authorization": f"Bearer {tok}", "Accept": "application/vnd.github+json",
+                                    "X-GitHub-Api-Version": "2022-11-28"})
+        except httpx.HTTPError as e:
+            return False, type(e).__name__
+        return r.status_code == 204, f"http {r.status_code} {r.text.strip()[:200]}"
+    if not shutil.which("gh"):
+        return False, "no GH_TOKEN and no gh CLI"
     with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
         json.dump(body, f); path = f.name
     try:
@@ -67,11 +99,10 @@ def publish_once() -> bool:
                            capture_output=True, text=True, timeout=30)
     finally:
         os.unlink(path)
-    ok = r.returncode == 0
-    log.info("dispatch %s blob=%dB %s", "ok" if ok else "FAIL", len(blob), "" if ok else r.stderr.strip()[:300])
-    return ok
+    return r.returncode == 0, r.stderr.strip()
 
 if __name__ == "__main__":
+    WITH_REPORT = "--with-report" in sys.argv
     if "--once" in sys.argv:
         sys.exit(0 if publish_once() else 1)
     while True:

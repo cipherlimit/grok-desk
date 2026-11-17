@@ -70,7 +70,10 @@ async def amain():
     for t in tasks: t.add_done_callback(_died)
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
-    for sig in (signal.SIGTERM, signal.SIGINT): loop.add_signal_handler(sig, stop.set)
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try: loop.add_signal_handler(sig, stop.set)
+        except (NotImplementedError, RuntimeError):     # Windows event loop: no add_signal_handler
+            signal.signal(sig, lambda *_: loop.call_soon_threadsafe(stop.set))
     await stop.wait()
     for t in tasks: t.cancel()
     log.info("desk stop")

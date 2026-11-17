@@ -7,7 +7,8 @@ def agent_logger(name):
     lg = logging.getLogger(name)
     if not lg.handlers:
         LOG_DIR.mkdir(parents=True, exist_ok=True)
-        h = logging.handlers.TimedRotatingFileHandler(LOG_DIR / f"{name}.log", when="midnight", backupCount=14)
+        h = logging.handlers.TimedRotatingFileHandler(LOG_DIR / f"{name}.log", when="midnight", backupCount=14,
+                                                     encoding="utf-8", delay=True)
         h.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
         lg.addHandler(h); lg.setLevel(logging.INFO); lg.propagate = False
     return lg

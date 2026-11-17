@@ -34,3 +34,12 @@ true 24/7 PAPER scanning.
 ## Run
     ./run.sh                        # desk + publisher (setsid, background cgroup)
     .venv/bin/python -m pytest tests
+
+## Windows host (LenovoYoga, D:\TradingDesk) — runs 24/7
+- `tools\install_windows.ps1`: `.venv` (py -3.12), requirements, tests, Scheduled Task **GrokDesk**
+  (pythonw `supervisor.py` at logon + every 5 min, IgnoreNew, never stopped on battery), AC power never sleeps.
+- `supervisor.py` = run.sh for Windows: starts `main.py` + `publisher.py`, `logs\*.pid`, restarts on exit,
+  kill-on-close Job object, single instance (`logs\supervisor.lock`). `run.ps1` restarts it via the task.
+- Secrets: `D:\TradingDesk\.desk_secrets\secrets.env` (git-ignored). The publisher uses `GH_TOKEN` from it
+  (no gh/openssl needed). `tools\desk_health.py` restarts via `schtasks /End` + `/Run GrokDesk`.
+- The box keeps a git-ignored `MOVED_TO` file: `run.sh`, `supervisor.py` and `desk_health.py` stand down there.

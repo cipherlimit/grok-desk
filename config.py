@@ -4,7 +4,11 @@ import os
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-SECRETS_FILE = Path(os.environ.get("DESK_SECRETS", "/home/box/.desk_secrets/secrets.env"))
+_BOX_SECRETS = Path("/home/box/.desk_secrets/secrets.env")
+# Box: /home/box/.desk_secrets. Windows laptop: <repo>\.desk_secrets\secrets.env (git-ignored).
+SECRETS_FILE = Path(os.environ.get("DESK_SECRETS") or
+                    (_BOX_SECRETS if os.name != "nt" else ROOT / ".desk_secrets" / "secrets.env"))
+MOVED_FILE = ROOT / "MOVED_TO"     # box only, git-ignored: desk now runs elsewhere (run.sh/desk_health stand down)
 OWNER_FILE = ROOT / "owner.json"
 DB_PATH = ROOT / "desk.db"
 LOG_DIR = Path(os.environ.get("DESK_LOG_DIR", ROOT / "logs"))
@@ -14,7 +18,7 @@ TICK_S = 15
 def _load_secrets() -> dict:
     vals = {}
     if SECRETS_FILE.exists():
-        for line in SECRETS_FILE.read_text().splitlines():
+        for line in SECRETS_FILE.read_text(encoding="utf-8-sig").splitlines():
             if "=" in line and not line.startswith("#"):
                 k, v = line.split("=", 1)
                 vals[k.strip()] = v.strip()

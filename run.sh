@@ -12,6 +12,10 @@
 # stay awake. A more frequent desk-health routine can only wake the box for
 # the length of that run.
 cd "$(dirname "$0")"
+if [ -e MOVED_TO ]; then
+  echo "desk runs on $(head -n1 MOVED_TO); not starting it on this box (remove MOVED_TO to override)"
+  exit 0
+fi
 pkill -f "\.venv/bin/python main.py" || true
 pkill -f "\.venv/bin/python publisher.py" || true
 sleep 1

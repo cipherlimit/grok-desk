@@ -1,6 +1,7 @@
 """run.sh must detach the desk from the launching session and /agent cgroup."""
 from pathlib import Path
-import subprocess
+import subprocess, os, sys, pytest
+pytestmark = pytest.mark.skipif(os.name == "nt", reason="run.sh is the box (bash) launcher")
 
 ROOT = Path(__file__).resolve().parents[1]
 RUN = ROOT / "run.sh"
