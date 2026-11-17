@@ -43,3 +43,8 @@ true 24/7 PAPER scanning.
 - Secrets: `D:\TradingDesk\.desk_secrets\secrets.env` (git-ignored). The publisher uses `GH_TOKEN` from it
   (no gh/openssl needed). `tools\desk_health.py` restarts via `schtasks /End` + `/Run GrokDesk`.
 - The box keeps a git-ignored `MOVED_TO` file: `run.sh`, `supervisor.py` and `desk_health.py` stand down there.
+- Laptop tasks: **GrokDeskHealth** (hourly `tools\desk_health.py`) and **GrokNightReport** (08:01:
+  `night_report.py --clear-skips`, then `publisher.py --once --with-report`; regular publishes keep shipping
+  a report younger than 26 h so it stays on Pages).
+- Box routines read the laptop through Pages: `tools/pages_watch.py` (exit 1 "stale N min" if state.json
+  is older than 15 min) and `tools/fetch_night_report.py` (writes output/night_report_<date>.md/.json).

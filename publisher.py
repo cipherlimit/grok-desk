@@ -11,7 +11,9 @@ EVERY = int(os.environ.get("PUBLISH_EVERY_S", "180"))
 MAX_BLOB = 60_000          # keep repository_dispatch payloads small
 log = agent_logger("publisher")
 
-WITH_REPORT = False       # --with-report: also ship the newest night_report_*.json
+WITH_REPORT = False       # --with-report: also ship the newest night_report_*.json, however old
+REPORT_KEEP_S = 26 * 3600 # every publish keeps shipping a report this fresh, so the next regular
+                          # publish (which redeploys the whole site) does not drop it from Pages
 
 def _files():
     """Every plan B JSON under output/ (recursive), except reports and temp files.
@@ -21,9 +23,9 @@ def _files():
         rel = p.relative_to(OUT_DIR).as_posix()
         if rel.startswith("night_report") or "/." in rel: continue
         out.append((rel, p))
-    if WITH_REPORT:
-        reps = sorted(OUT_DIR.glob("night_report_*.json"))
-        if reps: out.append((reps[-1].name, reps[-1]))
+    reps = sorted(OUT_DIR.glob("night_report_*.json"))
+    if reps and (WITH_REPORT or time.time() - reps[-1].stat().st_mtime < REPORT_KEEP_S):
+        out.append((reps[-1].name, reps[-1]))
     return out
 
 def _encrypt(raw: bytes) -> str:

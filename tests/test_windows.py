@@ -36,3 +36,21 @@ def test_supervisor_respects_moved(tmp_path):
     r = subprocess.run([sys.executable, "supervisor.py"], cwd=d, capture_output=True, text=True, timeout=30, env=env)
     assert r.returncode == 0
     assert "not starting" in (d / "logs" / "supervisor.log").read_text()
+
+def test_pages_watch_age():
+    import datetime as dt
+    sys.path.insert(0, str(ROOT / "tools"))
+    import pages_watch
+    now = dt.datetime(2026, 11, 17, 9, 0, tzinfo=dt.timezone.utc)
+    assert int(pages_watch.age_min("2026-11-17T08:44:00Z", now)) == 16
+
+def test_publisher_ships_fresh_night_report(tmp_path, monkeypatch):
+    import publisher, time as _t
+    monkeypatch.setattr(publisher, "OUT_DIR", tmp_path)
+    (tmp_path / "state.json").write_text("{}")
+    rep = tmp_path / "night_report_2026-11-16.json"; rep.write_text("{}")
+    assert "night_report_2026-11-16.json" in [r for r, _ in publisher._files()]
+    old = _t.time() - 30 * 3600; os.utime(rep, (old, old))
+    assert "night_report_2026-11-16.json" not in [r for r, _ in publisher._files()]
+    monkeypatch.setattr(publisher, "WITH_REPORT", True)
+    assert "night_report_2026-11-16.json" in [r for r, _ in publisher._files()]
