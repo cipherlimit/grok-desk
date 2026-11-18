@@ -52,7 +52,7 @@ def full_db(path):
         c.execute("INSERT INTO verdicts(mint,ts,alive_6h,organic,flush,chase,score,pass,reason,input_tokens) VALUES(?,?,?,?,?,?,?,?,?,?)",
                   (m, iso(t), .8, .7, .1, .2, sc, 1, None, 0))
         c.execute("INSERT INTO signals(mint,ts,price,size_usd,stack_pct,link,mode,status) VALUES(?,?,?,?,?,?,?,?)",
-                  (m, iso(t + 5), 1e-5, 16.0, 8, links.coin_url(m, "solana"), "PAPER", "bought"))
+                  (m, iso(t + 5), 1e-5, 16.0, 8, links.coin_url(m), "PAPER", "bought"))
     # closed: WIGGLES trailed out green, Shipyard stopped red; open: PIKA
     c.execute("INSERT INTO positions(mint,opened_at,entry_price,size_usd,peak_price,stop_price,trail_active,closed_at,exit_price,exit_reason,pnl_usd,fees_usd,mode) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
               (STOP, iso(now - 148 * 60), 1e-5, 16, 1.02e-5, 0.94e-5, 0, iso(now - 120 * 60), 0.939e-5, "stop", -1.55, 0.57, "PAPER"))

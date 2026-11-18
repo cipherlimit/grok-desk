@@ -15,6 +15,8 @@ def values():
     for k in ("TYPESAFE_API_KEY", "TG_TOKEN", "APP_TOKEN", "DATA_KEY", "HELIUS_API_KEY", "DATA_PATH"):
         x = secret(k)
         if x: v[k] = [x]
+    bsc = secret("BSC_RPC_URL")                          # BNB step: optional keyed RPC URL (the free default is public)
+    if bsc and bsc != "https://bsc-rpc.publicnode.com": v["BSC_RPC_URL"] = [bsc]
     pem = secret("VAPID_PRIVATE_KEY_FILE")
     if pem and Path(pem).exists():
         from cryptography.hazmat.primitives import serialization

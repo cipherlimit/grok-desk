@@ -1,7 +1,7 @@
 """Agent 4 · Executor. Never picks a coin, never places an order, never touches funds.
 Arithmetic + 1 Telegram button; PAPER fills at the signal price at once. (PART 5, Agent 4)"""
 import asyncio, time
-import db, fields, links, onchain, telegram
+import db, fields, links, onchain, telegram, chains
 from sources import SourceError, with_retry
 from agents.base import agent_logger, wait_unpaused
 
@@ -70,8 +70,8 @@ class Executor:
                 "link": link, "mode": mode, "status": status, "reason": reason}
 
     def _skip(self, mint, mode, link, reason, stack, raw, cap, price=None):
-        self.c.execute("INSERT INTO signals(mint,ts,price,size_usd,stack_pct,link,mode,status) VALUES(?,?,?,?,?,?,?,?)",
-                       (mint, db.now_iso(), price, None, None, link, mode, "skipped"))
+        self.c.execute("INSERT INTO signals(mint,ts,price,size_usd,stack_pct,link,mode,status,chain) VALUES(?,?,?,?,?,?,?,?,?)",
+                       (mint, db.now_iso(), price, None, None, link, mode, "skipped", chains.chain_of(mint)))
         log.info("mint=%s stack=%s raw=%s cap=%s final=None mode=%s status=skipped reason=%s link=%s",
                  mint, stack, raw, cap, mode, reason, link)
         return self._out(mint, price, None, None, link, mode, "skipped", reason)
@@ -79,7 +79,7 @@ class Executor:
     async def handle(self, msg: dict) -> dict | None:
         an, scan = msg["analyst"], msg["scanner"]
         mint, s = an["mint"], db.settings_all(self.c)
-        mode = s["desk.mode"]; link = links.coin_url(mint, "solana")
+        mode = s["desk.mode"]; link = links.coin_url(mint)
         night_start, _ = db.night_bounds()
         if self.c.execute("SELECT 1 FROM signals WHERE mint=? AND ts>=?", (mint, night_start)).fetchone():
             log.info("2nd pass ignored (1 push per coin per night) mint=%s", mint); return None
@@ -106,8 +106,8 @@ class Executor:
         text = push_text(mode, name, size, pct, an["score"], s["risk.stop_pct"], s["risk.trail_pct"], msg.get("auditor_checked", 8))
         buttons = [[telegram.url_button("Buy on FOMO", link)],
                    [telegram.cb_button("Bought", f"bought:{mint}"), telegram.cb_button("Skip", f"skip:{mint}")]]
-        cur = self.c.execute("INSERT INTO signals(mint,ts,price,size_usd,stack_pct,link,mode,status) VALUES(?,?,?,?,?,?,?,?)",
-                             (mint, db.now_iso(), price, size, pct, link, mode, "sent"))
+        cur = self.c.execute("INSERT INTO signals(mint,ts,price,size_usd,stack_pct,link,mode,status,chain) VALUES(?,?,?,?,?,?,?,?,?)",
+                             (mint, db.now_iso(), price, size, pct, link, mode, "sent", chains.chain_of(mint)))
         sig_id = cur.lastrowid
         if mode == "LIVE": self.pending[mint] = asyncio.get_running_loop().create_future()
         pushed = await telegram.send(text, buttons)
@@ -132,8 +132,9 @@ class Executor:
 
     def fill(self, mint, price, size, pct, mode, s):
         stop_pct = s["risk.stop_pct"]
-        cur = self.c.execute("INSERT INTO positions(mint,opened_at,entry_price,size_usd,peak_price,stop_price,trail_active,mode) "
-                             "VALUES(?,?,?,?,?,?,0,?)", (mint, db.now_iso(), price, size, price, price * (1 - stop_pct / 100), mode))
+        cur = self.c.execute("INSERT INTO positions(mint,opened_at,entry_price,size_usd,peak_price,stop_price,trail_active,mode,chain) "
+                             "VALUES(?,?,?,?,?,?,0,?,?)", (mint, db.now_iso(), price, size, price, price * (1 - stop_pct / 100), mode,
+                                                          chains.chain_of(mint)))
         name = (self.c.execute("SELECT name FROM coins WHERE mint=?", (mint,)).fetchone() or {"name": None})["name"] or mint[:6]
         db.activity(self.c, "bought", NAME, f"Bought {name}", f"Executor · {db.local_hhmm()}",
                     f"${size:.2f} · {fmt_pct(pct)}% of stack", mint)

@@ -68,7 +68,7 @@ async def main(hours=2.0):
     print("\nActivity:")
     acts = c.execute("SELECT ts,kind,title,subtitle,value,mint FROM activity ORDER BY id").fetchall()
     if not acts: print("  Nothing yet tonight")
-    for a in acts: print(f"  {db.local_hhmm(a['ts'])} CET  {a['title']} / {a['subtitle']} / {a['value']}  {links.coin_url(a['mint'], 'solana')}")
+    for a in acts: print(f"  {db.local_hhmm(a['ts'])} CET  {a['title']} / {a['subtitle']} / {a['value']}  {links.coin_url(a['mint'])}")
     print("\nScanner kills:")
     for r in c.execute("SELECT s.reason, c.name, s.mint FROM scans s JOIN coins c USING(mint) WHERE verdict='kill'"):
         print(f"  {r['name']}: {r['reason']}")

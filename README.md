@@ -48,3 +48,26 @@ true 24/7 PAPER scanning.
   a report younger than 26 h so it stays on Pages).
 - Box routines read the laptop through Pages: `tools/pages_watch.py` (exit 1 "stale N min" if state.json
   is older than 15 min) and `tools/fetch_night_report.py` (writes output/night_report_<date>.md/.json).
+
+## BNB Chain (branch bnb-chain, 2026-11-18)
+Off until the owner sends `bnb on` in Telegram (setting `chains.enabled`, default `solana`; `bnb off` reverts).
+- **New coins:** GeckoTerminal `/networks/bsc/new_pools` pages 1-2 every `scanner.bnb_poll_s` (60s): PancakeSwap
+  pools only (four.meme graduations, flap.sh, plain launches); four.meme bonding curves and majors (WBNB, USDT, ...)
+  skipped. They enter the same waiting room (`coins.chain='bnb'`, `migrated_at` = pool creation) and the same
+  Scanner rules (liquidity, top 10, 1h, copycat, judged from 10 min).
+- **Market data:** DexScreener `/tokens/v1/bsc` (Sources.dex_tokens splits a batch per chain); the desk's pool is the
+  biggest `pancakeswap` pair. BNB addresses are stored lowercase.
+- **Holders:** replayed from the token's Transfer logs over a public BSC RPC (`bsc.py`; default
+  `https://bsc-rpc.publicnode.com`, override with the secret `BSC_RPC_URL`). GoPlus holder lists lag new tokens.
+- **Auditor, 8 BNB layers** (stop at first red; missing data = red, like layer 7):
+  1 Honeypot (GoPlus is_honeypot/cannot_sell_all/cannot_buy + honeypot.is simulation when it has the pair)
+  2 Taxes (buy/sell/transfer < `auditor.bnb_max_tax_pct` 10%, tax not modifiable)
+  3 Contract (verified source, no proxy, not mintable, no self-destruct/hidden owner/take-back/external call)
+  4 Owner powers (no balance edits, pause, blacklist, cooldown; owner renounced if `auditor.bnb_require_renounced`)
+  5 Top 10 holders < `auditor.max_top10_pct` (pools, burn and launchpad contracts excluded)
+  6 Liquidity: V2 LP burned + locked >= `auditor.min_lp_locked_pct`, not pulled > `auditor.liq_drop_max_pct`
+  7 Pool age >= `auditor.min_pool_age_min`   8 Dev wallet (creator + live owner) < `auditor.max_dev_pct`
+- Telegram: `why 0x...`, `buy 0x...`, or a pasted FOMO coin link; FOMO links come from `links.coin_url` (chainId 56).
+- Dry run (read-only, no db/Telegram/publisher): `python tools/bnb_dryrun.py [pages] [coins]`.
+- Schema: `chain TEXT NOT NULL DEFAULT 'solana'` appended to coins/scans/audits/signals/positions by
+  `db.migrate_chain` on connect (ALTER TABLE ADD COLUMN, existing rows kept, idempotent).

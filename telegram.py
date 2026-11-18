@@ -52,7 +52,8 @@ HELP = ("Commands:\n"
         "set stop to -8% (any setting by name or alias)\n"
         "stack 1240 · status · paper · live · invite · report · test\n"
         "feed · feed on · feed off (every desk event here; off = mute)\n"
-        "X = name, symbol or mint")
+        "bnb · bnb on · bnb off (BNB Chain coins next to Solana)\n"
+        "X = name, symbol, mint, 0x address or FOMO link")
 AGENTS = ["scanner", "auditor", "analyst", "executor", "risk"]
 
 class Desk:
@@ -65,16 +66,20 @@ class Desk:
     # ---------- helpers ----------
     def resolve(self, x: str):
         """-> ("ok", mint) | ("ask", text, buttons) | ("unknown", text)."""
-        import links
+        import links, chains
         x = x.strip()
+        m = re.search(r"fomo\.family/coin\?(?:[^\s]*&)?address=([0-9A-Za-z]+)", x)      # a pasted FOMO coin link
+        if m: x = m.group(1)
         if re.fullmatch(r"[1-9A-HJ-NP-Za-km-z]{32,44}", x):
             return ("ok", x)
+        if chains.is_evm(x):                                   # BNB Chain address
+            return ("ok", chains.norm(x))
         rows = list(self.c.execute("SELECT mint,name,symbol FROM coins WHERE lower(name)=lower(?) OR lower(symbol)=lower(?) "
                                    "OR lower(symbol)=lower(?)", (x, x, x.lstrip("$"))))
         if not rows: return ("unknown", f"I don't know {x}. Send me its mint.")
         if len(rows) == 1: return ("ok", rows[0]["mint"])
         lines = [f"{x} matches {len(rows)} coins. Which one? Reply with the mint:"]
-        for r in rows[:8]: lines.append(f"{r['name'] or r['symbol']} · {r['mint']}\n{links.coin_url(r['mint'], 'solana')}")
+        for r in rows[:8]: lines.append(f"{r['name'] or r['symbol']} · {r['mint']}\n{links.coin_url(r['mint'])}")
         return ("ask", "\n".join(lines), None)
 
     def name(self, mint):
@@ -83,7 +88,7 @@ class Desk:
 
     def coin_line(self, mint):
         import links
-        return f"{self.name(mint)}\n{links.coin_url(mint, 'solana')}"
+        return f"{self.name(mint)}\n{links.coin_url(mint)}"
 
     @staticmethod
     def show(key, v):
@@ -124,6 +129,8 @@ class Desk:
         if low in ("test", "test push"): return self.cmd_test()
         m = re.fullmatch(r"feed(?:\s+(on|off))?", low)
         if m: return self.cmd_feed(m.group(1))
+        m = re.fullmatch(r"bnb(?:\s+(on|off))?", low)
+        if m: return self.cmd_bnb(m.group(1))
         return HELP, None
 
     # ---------- commands ----------
@@ -132,7 +139,7 @@ class Desk:
         from agents import auditor as aud
         r = self.resolve(x)
         if r[0] != "ok": return r[1], None
-        mint = r[1]; url = links.coin_url(mint, "solana")
+        mint = r[1]; url = links.coin_url(mint)
         start, _ = db.night_bounds()
         sig = self.c.execute("SELECT * FROM signals WHERE mint=? AND ts>=? AND status!='skipped' ORDER BY id DESC LIMIT 1", (mint, start)).fetchone()
         if sig:
@@ -145,13 +152,15 @@ class Desk:
                          [cb_button("Bought", f"bought:{mint}"), cb_button("Skip", f"skip:{mint}")]]
         scan = await aud.adhoc_scan(self.c, self.src, mint)
         if not scan:
-            return f"{self.name(mint)}: DexScreener has no PumpSwap pool for it, can't take it apart.\n{url}", [[url_button("Buy on FOMO", url)]]
+            pool = "PancakeSwap" if mint.startswith("0x") else "PumpSwap"
+            return f"{self.name(mint)}: DexScreener has no {pool} pool for it, can't take it apart.\n{url}", [[url_button("Buy on FOMO", url)]]
         out = await aud.Auditor(self.c, self.bus, self.src).audit(scan, adhoc=True)
         lines = [f"{self.name(mint)} · Auditor {'8/8' if out['passed'] else 'red'}"]
         done = {l["n"]: l for l in out["layers"]}
+        names = aud.layers_for(mint)
         for n in range(1, 9):
             l = done.get(n)
-            lines.append(f"{n} {aud.LAYERS[n]}: " + ((("✓ " if l["pass"] else "✗ ") + l["value"]) if l else "not checked"))
+            lines.append(f"{n} {names[n]}: " + ((("✓ " if l["pass"] else "✗ ") + l["value"]) if l else "not checked"))
         lines += ["not sized, not on the desk", url]
         return "\n".join(lines), [[url_button("Buy on FOMO", url)]]
 
@@ -159,7 +168,7 @@ class Desk:
         import links
         r = self.resolve(x)
         if r[0] != "ok": return r[1], None
-        mint = r[1]; url = links.coin_url(mint, "solana")
+        mint = r[1]; url = links.coin_url(mint)
         p = self.c.execute("SELECT * FROM positions WHERE mint=? AND closed_at IS NULL ORDER BY id DESC LIMIT 1", (mint,)).fetchone()
         if not p: return f"No open {self.name(mint)} position.\n{url}", None
         return (f"Sell {self.name(mint)} · ${p['size_usd']:.2f} in ({p['mode']})\n{url}",
@@ -169,7 +178,7 @@ class Desk:
         import db, links
         r = self.resolve(x)
         if r[0] != "ok": return r[1], None
-        mint = r[1]; url = links.coin_url(mint, "solana"); nm = self.name(mint)
+        mint = r[1]; url = links.coin_url(mint); nm = self.name(mint)
         hh = lambda ts: f"{db.local_hhmm(ts)} CET" if ts else "?"
         p = self.c.execute("SELECT * FROM positions WHERE mint=? ORDER BY id DESC LIMIT 1", (mint,)).fetchone()
         if p and p["closed_at"]:
@@ -246,7 +255,7 @@ class Desk:
         ops = db.open_positions(self.c)
         if not ops: lines.append("no open positions")
         for p in ops:
-            url = links.coin_url(p["mint"], "solana")
+            url = links.coin_url(p["mint"])
             lines.append(f"{self.name(p['mint'])} · ${p['size_usd']:.2f} in · stop -{api.pos_stop_pct(dict(p)):g}%\n{url}")
             buttons.append([url_button(f"Sell on FOMO · {self.name(p['mint'])}"[:60], url)])
         return "\n".join(lines), buttons or None
@@ -274,7 +283,7 @@ class Desk:
         import links
         r = self.c.execute("SELECT mint FROM coins ORDER BY migrated_at DESC LIMIT 1").fetchone()
         if not r: return "PAPER · Test push · Grok Bot · now\nNo coin seen yet.", [[url_button("Open FOMO", links.SIGNUP_URL)]]
-        url = links.coin_url(r["mint"], "solana")
+        url = links.coin_url(r["mint"])
         return (f"PAPER · Test push · Grok Bot · now\n{self.name(r['mint'])} · test only, no position, no order\n{url}",
                 [[url_button("Buy on FOMO", url)]])
 
@@ -291,6 +300,21 @@ class Desk:
         head = "Feed on: you get every desk event here." if on else "Feed off (muted). Send `feed on` to turn it back on."
         return (f"{head}\nGood-liquidity alert at ${thr:,.0f} ({src}). Change it with `set good liq to 30000` "
                 f"(0 = follow the Scanner).\nSend `feed off` to mute."), None
+
+    def cmd_bnb(self, arg=None):
+        """bnb on / bnb off / bnb: BNB Chain coins in the Scanner (settings chains.enabled, change_log who=telegram)."""
+        import db, chains
+        s = db.settings_all(self.c)
+        if arg:
+            db.set_setting(self.c, "chains.enabled", chains.with_bnb(s, arg == "on"), who="telegram")
+            s = db.settings_all(self.c)
+        on = chains.BNB in chains.enabled(s)
+        cov = " + ".join(chains.LABEL[c] for c in (chains.SOLANA, chains.BNB) if c in chains.enabled(s))
+        if on:
+            return (f"BNB Chain on. The Scanner now covers {cov}: new PancakeSwap pools, the same liquidity, top 10, 1h and "
+                    f"age rules, then the 8 BNB Auditor checks (honeypot, taxes, contract, owner, top 10, LP, age, dev). "
+                    f"Still PAPER, still your OK for any buy. Send `bnb off` to stop."), None
+        return f"BNB Chain off. The Scanner covers {cov}. Send `bnb on` to add BNB Chain.", None
 
     def cmd_report(self):
         p = OUT_DIR / "last_page_url.txt"

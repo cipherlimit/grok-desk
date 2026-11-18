@@ -59,7 +59,7 @@ class Risk:
         return (r["name"] if r else None) or mint[:6]
 
     def sell_buttons(self, pos_id, mint):
-        return [[telegram.url_button("Sell on FOMO", links.coin_url(mint, "solana"))],
+        return [[telegram.url_button("Sell on FOMO", links.coin_url(mint))],
                 [telegram.cb_button("Sold", f"sold:{pos_id}")]]
 
     async def poll(self) -> int:
@@ -98,7 +98,7 @@ class Risk:
             log.info("pos=%s mint=%s price=None peak=%s stop=%s action=no price (%d)", pid, mint, pos["peak_price"], pos["stop_price"], n)
             if n == int(s["risk.no_price_polls"]):
                 await telegram.send(f"{name}: no price for 1 min",
-                                    [[telegram.url_button("Sell on FOMO", links.coin_url(mint, "solana"))]])
+                                    [[telegram.url_button("Sell on FOMO", links.coin_url(mint))]])
             return
         self.no_price[pid] = 0
         hours = (time.time() - db.parse_iso(pos["opened_at"])) / 3600
@@ -118,7 +118,7 @@ class Risk:
         pnl, fee = fees.paper_pnl(pos["size_usd"], pos["entry_price"], price, s["desk.fees_ref_discount"])
         pct = 100 * pnl / pos["size_usd"]
         stop_pct = pos_stop_pct(pos["entry_price"], pos["stop_price"])
-        link = links.coin_url(mint, "solana")
+        link = links.coin_url(mint)
         status = "closed" if mode == "PAPER" else "exiting"
         ts = db.now_iso()
         if mode == "PAPER":

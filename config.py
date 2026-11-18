@@ -37,6 +37,10 @@ def rpc_url() -> str:
         return "https://mainnet.helius-rpc.com/?api-key=" + key
     return "https://api.mainnet-beta.solana.com"
 
+def bsc_rpc_url() -> str:
+    """BNB Chain RPC: secret BSC_RPC_URL if set (may carry a key: never logged), else the free key-less publicnode."""
+    return secret("BSC_RPC_URL") or "https://bsc-rpc.publicnode.com"
+
 PUMP_PROGRAM = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"   # bonding curve PDA ["bonding-curve", mint]
 LOCAL_TZ = "Europe/Budapest"
 
@@ -126,6 +130,11 @@ SPEC = {
     # feed (user 2026-11-18): every desk event to Telegram; good_liq 0 = follow scanner.min_liquidity_usd
     "feed.enabled": (True, None, None, "desk", ["feed"]),
     "feed.good_liq_usd": (0, 0, 10_000_000, "desk", ["good liq", "good liquidity"]),
+    # chains (user 2026-11-18): BNB Chain next to Solana. Default solana = deploying changes nothing; Telegram "bnb on" / "bnb off"
+    "chains.enabled": ("solana", ["solana", "bnb", "solana,bnb"], None, "desk", ["chains"]),
+    "scanner.bnb_poll_s": (60, 30, 600, "scanner", ["bnb poll"]),            # GeckoTerminal new BSC pools, free tier
+    "auditor.bnb_max_tax_pct": (10, 0, 100, "auditor", ["max tax", "bnb tax"]),   # buy AND sell tax must be under this
+    "auditor.bnb_require_renounced": (True, None, None, "auditor", ["renounced"]),  # owner must be renounced (0x0 / dead)
 }
 DEFAULTS = {k: v[0] for k, v in SPEC.items()}
 DEFAULTS.update({f"paused.{a}": False for a in ("scanner", "auditor", "analyst", "executor", "risk")})

@@ -11,7 +11,7 @@ def _name(c, mint):
     return (r and (r["name"] or r["symbol"])) or mint[:6]
 
 def _coin(c, mint):
-    return {"mint": mint, "name": _name(c, mint), "coin_url": links.coin_url(mint, "solana")}
+    return {"mint": mint, "name": _name(c, mint), "coin_url": links.coin_url(mint)}
 
 def kill_reason_group(reason: str) -> str:
     r = (reason or "").lower()

@@ -8,25 +8,25 @@ ACTIVITY_KINDS = ("bought", "sold", "stopped", "rejected")
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS coins (
   mint TEXT PRIMARY KEY, name TEXT, symbol TEXT, pool TEXT, migrated_at TEXT, creator TEXT,
-  creator_balance_at_migration REAL, holders INTEGER);
+  creator_balance_at_migration REAL, holders INTEGER, chain TEXT NOT NULL DEFAULT 'solana');
 CREATE TABLE IF NOT EXISTS scans (
   id INTEGER PRIMARY KEY AUTOINCREMENT, mint TEXT NOT NULL, ts TEXT NOT NULL,
-  liquidity_usd REAL, top10_pct REAL, h1_change_pct REAL, age_min REAL, verdict TEXT, reason TEXT);
+  liquidity_usd REAL, top10_pct REAL, h1_change_pct REAL, age_min REAL, verdict TEXT, reason TEXT, chain TEXT NOT NULL DEFAULT 'solana');
 CREATE TABLE IF NOT EXISTS audits (
   id INTEGER PRIMARY KEY AUTOINCREMENT, mint TEXT NOT NULL, ts TEXT NOT NULL,
-  layer INTEGER, name TEXT, value_text TEXT, pass INTEGER, source TEXT);
+  layer INTEGER, name TEXT, value_text TEXT, pass INTEGER, source TEXT, chain TEXT NOT NULL DEFAULT 'solana');
 CREATE TABLE IF NOT EXISTS verdicts (
   id INTEGER PRIMARY KEY AUTOINCREMENT, mint TEXT NOT NULL, ts TEXT NOT NULL,
   alive_6h REAL, organic REAL, flush REAL, chase REAL, score INTEGER, pass INTEGER,
   reason TEXT, input_tokens INTEGER);
 CREATE TABLE IF NOT EXISTS signals (
   id INTEGER PRIMARY KEY AUTOINCREMENT, mint TEXT NOT NULL, ts TEXT NOT NULL,
-  price REAL, size_usd REAL, stack_pct REAL, link TEXT, mode TEXT, status TEXT);
+  price REAL, size_usd REAL, stack_pct REAL, link TEXT, mode TEXT, status TEXT, chain TEXT NOT NULL DEFAULT 'solana');
 CREATE TABLE IF NOT EXISTS positions (
   id INTEGER PRIMARY KEY AUTOINCREMENT, mint TEXT NOT NULL, opened_at TEXT NOT NULL,
   entry_price REAL NOT NULL, size_usd REAL NOT NULL, peak_price REAL NOT NULL, stop_price REAL NOT NULL,
   trail_active INTEGER NOT NULL DEFAULT 0, closed_at TEXT, exit_price REAL, exit_reason TEXT,
-  pnl_usd REAL, fees_usd REAL, mode TEXT NOT NULL);
+  pnl_usd REAL, fees_usd REAL, mode TEXT NOT NULL, chain TEXT NOT NULL DEFAULT 'solana');
 CREATE TABLE IF NOT EXISTS activity (
   id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL,
   kind TEXT NOT NULL CHECK (kind IN ('bought','sold','stopped','rejected')),
@@ -54,13 +54,13 @@ CREATE INDEX IF NOT EXISTS change_log_ts ON change_log(ts);
 
 # Spec, used by tests and migration: table -> columns in order.
 SPEC = {
-    "coins": ["mint", "name", "symbol", "pool", "migrated_at", "creator", "creator_balance_at_migration", "holders"],
-    "scans": ["id", "mint", "ts", "liquidity_usd", "top10_pct", "h1_change_pct", "age_min", "verdict", "reason"],
-    "audits": ["id", "mint", "ts", "layer", "name", "value_text", "pass", "source"],
+    "coins": ["mint", "name", "symbol", "pool", "migrated_at", "creator", "creator_balance_at_migration", "holders", "chain"],
+    "scans": ["id", "mint", "ts", "liquidity_usd", "top10_pct", "h1_change_pct", "age_min", "verdict", "reason", "chain"],
+    "audits": ["id", "mint", "ts", "layer", "name", "value_text", "pass", "source", "chain"],
     "verdicts": ["id", "mint", "ts", "alive_6h", "organic", "flush", "chase", "score", "pass", "reason", "input_tokens"],
-    "signals": ["id", "mint", "ts", "price", "size_usd", "stack_pct", "link", "mode", "status"],
+    "signals": ["id", "mint", "ts", "price", "size_usd", "stack_pct", "link", "mode", "status", "chain"],
     "positions": ["id", "mint", "opened_at", "entry_price", "size_usd", "peak_price", "stop_price", "trail_active",
-                  "closed_at", "exit_price", "exit_reason", "pnl_usd", "fees_usd", "mode"],
+                  "closed_at", "exit_price", "exit_reason", "pnl_usd", "fees_usd", "mode", "chain"],
     "activity": ["id", "ts", "kind", "mint", "agent", "title", "subtitle", "value"],
     "prices": ["mint", "ts", "price", "volume_m5"],
     "balance": ["ts", "value"],
@@ -80,7 +80,22 @@ def connect(path=DB_PATH) -> sqlite3.Connection:
     c.execute("PRAGMA journal_mode=WAL")
     c.execute("PRAGMA synchronous=NORMAL")
     c.executescript(SCHEMA)
+    migrate_chain(c)
     return c
+
+CHAIN_TABLES = ("coins", "scans", "audits", "signals", "positions")
+
+def migrate_chain(c) -> list[str]:
+    """BNB step (2026-11-18): add chain TEXT NOT NULL DEFAULT 'solana' as the LAST column of the coin tables.
+    ALTER TABLE ADD COLUMN keeps every existing row (they all read 'solana'); idempotent, safe on the live laptop db.
+    Returns the tables it changed."""
+    changed = []
+    for t in CHAIN_TABLES:
+        if "chain" not in table_columns(c, t):
+            c.execute(f"ALTER TABLE {t} ADD COLUMN chain TEXT NOT NULL DEFAULT 'solana'")
+            c.execute(f"UPDATE {t} SET chain='bnb' WHERE mint LIKE '0x%' AND length(mint)=42")
+            changed.append(t)
+    return changed
 
 def table_columns(c, table) -> list[str]:
     return [r[1] for r in c.execute(f"PRAGMA table_info({table})")]
@@ -138,15 +153,17 @@ def write_price_batch(c, writer: str, pairs: list[dict], ts: str | None = None) 
     if writer not in PRICE_WRITERS: raise ValueError(f"unknown price writer {writer!r}")
     if not isinstance(pairs, list): raise TypeError("pairs must be the raw DexScreener list")
     ts = ts or now_iso()
+    import chains
     best: dict[str, dict] = {}
     for p in pairs:
-        mint = (p.get("baseToken") or {}).get("address")
+        mint = chains.norm((p.get("baseToken") or {}).get("address"))
         if not mint: continue
+        dex = chains.POOL_DEX[chains.chain_of(mint)]       # pumpswap (Solana) | pancakeswap (BNB)
         liq = lambda q: ((q.get("liquidity") or {}).get("usd") or 0)
         cur = best.get(mint)
         if (cur is None
-                or (p.get("dexId") == "pumpswap" and cur.get("dexId") != "pumpswap")
-                or (p.get("dexId") == cur.get("dexId") == "pumpswap" and liq(p) > liq(cur))):
+                or (p.get("dexId") == dex and cur.get("dexId") != dex)
+                or (p.get("dexId") == cur.get("dexId") == dex and liq(p) > liq(cur))):
             best[mint] = p
     rows = []
     for mint, p in best.items():

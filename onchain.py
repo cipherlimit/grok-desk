@@ -39,7 +39,16 @@ async def wallet_balance_raw(src, owner: str, mint: str) -> int:
                for a in (fields.dig(b, "result.value") or []))
 
 def best_pumpswap_pair(pairs: list[dict], mint: str) -> dict | None:
-    """The PumpSwap pair for this mint; if several, the one with the most liquidity."""
-    c = [p for p in pairs or [] if fields.dig(p, "baseToken.address") == mint and p.get("dexId") == fields.DEX_POOL_DEX_ID]
+    """The desk's pool pair for this mint; if several, the one with the most liquidity.
+    Solana: dexId pumpswap, exact mint (unchanged). BNB (0x...): dexId pancakeswap (v2/v3/infinity),
+    address compared case-insensitively (DexScreener returns checksummed addresses)."""
+    import chains
+    if chains.chain_of(mint) == chains.BNB:
+        c = [p for p in pairs or [] if chains.same(fields.dig(p, "baseToken.address"), mint)
+             and p.get("dexId") == chains.POOL_DEX[chains.BNB]]
+    else:
+        c = [p for p in pairs or [] if fields.dig(p, "baseToken.address") == mint and p.get("dexId") == fields.DEX_POOL_DEX_ID]
     if not c: return None
     return max(c, key=lambda p: fields.dig(p, "liquidity.usd", 0) or 0)
+
+best_pair = best_pumpswap_pair      # chain-aware name for new code

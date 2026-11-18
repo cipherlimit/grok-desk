@@ -11,7 +11,7 @@ from test_agents import _coin, pika_pair, ago
 
 ROOT = Path(__file__).resolve().parents[1]
 FOMO = re.compile(r"https?://(?:www\.)?fomo\.family[^\s\"'<>()\[\]|]*")
-COIN_RE = re.compile(r"^https://fomo\.family/coin\?address=[1-9A-HJ-NP-Za-km-z]{32,44}&chainId=\d+&r=savipww&source=share_link$")
+COIN_RE = re.compile(r"^https://fomo\.family/coin\?address=(?:[1-9A-HJ-NP-Za-km-z]{32,44}|0x[0-9a-f]{40})&chainId=\d+&r=savipww&source=share_link$")
 PROF_RE = re.compile(r"^https://fomo\.family/profile/[^/?]+\?source=share_link&r=savipww$")
 SHORT = re.compile(r"(?:\bt\.co/|bit\.ly|tinyurl\.com|goo\.gl|ow\.ly|lnkd\.in|rebrand\.ly|cutt\.ly|is\.gd/|buff\.ly|shorturl\.at|rb\.gy|t\.ly/)", re.I)
 
@@ -33,6 +33,11 @@ def test_links_shapes():
     assert links.SIGNUP_URL == "https://fomo.family/r/savipww"
     assert links.coin_url(PIKA, "dogechain") == links.SIGNUP_URL
     for ch, cid in links.CHAIN_ID.items(): assert f"chainId={cid}&r=savipww" in links.coin_url(PIKA, ch)
+
+def test_bnb_link_shape():
+    bea = "0xc7b40b36aa459db01166556ff735947d1569fbca"
+    assert links.coin_url(bea) == "https://fomo.family/coin?address=0xc7b40b36aa459db01166556ff735947d1569fbca&chainId=56&r=savipww&source=share_link"
+    assert links.coin_url(bea) == links.coin_url(bea, "bnb") and ok_url(links.coin_url(bea))
 
 def test_repo_grep():
     files = subprocess.run(["git", "ls-files", "--cached", "--others", "--exclude-standard"], cwd=ROOT, capture_output=True, text=True).stdout.split()
