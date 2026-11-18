@@ -53,12 +53,12 @@ def _fixture_out(tmp_path):
 def test_api_json_fixture_and_live(tmp_path):
     c, out = _fixture_out(tmp_path)
     n = 0
-    for f in out.rglob("*.json"): n += check_text(f.read_text(), str(f.relative_to(out)))
+    for f in out.rglob("*.json"): n += check_text(f.read_text(encoding="utf-8"), str(f.relative_to(out)))
     assert n > 20
-    acc = json.loads((out / "account.json").read_text())
+    acc = json.loads((out / "account.json").read_text(encoding="utf-8"))
     assert acc["profile_url"] == links.profile_url("CipherLimit") and acc["signup_url"] == links.SIGNUP_URL
     live = ROOT / "output"
-    for f in live.rglob("*.json"): check_text(f.read_text(), "live " + str(f.relative_to(live)))
+    for f in live.rglob("*.json"): check_text(f.read_text(encoding="utf-8"), "live " + str(f.relative_to(live)))
 
 def test_rendered_pushes(conn, pushes):
     _coin(conn); db.add_balance(conn, 200)
@@ -82,8 +82,8 @@ def test_account_tab_and_page(tmp_path):
     assert check_text(md, "page") >= 5 and md.rstrip().endswith("New to FOMO? " + links.SIGNUP_URL)
     html = ROOT / "logs" / "acceptance" / "screens" / "account.html"
     if html.exists():                                 # the rendered Account tab from the screenshot run
-        t = html.read_text(); assert check_text(t, "Account tab DOM") >= 2
+        t = html.read_text(encoding="utf-8"); assert check_text(t, "Account tab DOM") >= 2
         assert links.profile_url("CipherLimit").replace("&", "&amp;") in t
-    for f in (ROOT / "output").glob("night_report_*.md"): check_text(f.read_text(), f.name)
+    for f in (ROOT / "output").glob("night_report_*.md"): check_text(f.read_text(encoding="utf-8"), f.name)
     for f in (ROOT / "web").rglob("*"):
-        if f.is_file() and f.suffix in (".html", ".js", ".css", ".json"): assert "fomo.family" not in f.read_text(), f
+        if f.is_file() and f.suffix in (".html", ".js", ".css", ".json"): assert "fomo.family" not in f.read_text(encoding="utf-8"), f

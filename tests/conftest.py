@@ -7,7 +7,7 @@ from sources import SourceError, RateLimited
 
 RAW = ROOT / "logs" / "raw"   # samples are read from the real tree
 def raw(name):
-    d = json.loads((RAW / name).read_text())
+    d = json.loads((RAW / name).read_text(encoding="utf-8"))
     if isinstance(d, dict) and "response" in d and "meta" in d: return d["response"]
     if isinstance(d, dict) and "body" in d and "http" in d: return d["body"]
     return d
