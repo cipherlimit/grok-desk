@@ -53,6 +53,25 @@ class Risk:
         self.c, self.bus, self.src = conn, bus, src
         self.no_price: dict[int, int] = {}
         self.exiting: dict[int, dict] = {}   # LIVE: waiting for [Sold]
+        self.last_poll: dict[int, float] = {}  # position id -> time.time() of its last price poll
+
+    @staticmethod
+    def interval_for(pos, s, now: float) -> float:
+        """Fix 2 (2026-11-18): risk.fast_poll_s for the first risk.fast_window_s after the fill, then risk.poll_s."""
+        age = now - db.parse_iso(pos["opened_at"])
+        if age < s["risk.fast_window_s"]: return min(s["risk.fast_poll_s"], s["risk.poll_s"])
+        return s["risk.poll_s"]
+
+    def due(self, pos, s, now: float) -> bool:
+        last = self.last_poll.get(pos["id"])
+        return last is None or now - last >= self.interval_for(pos, s, now) - 0.5
+
+    def tick_s(self, s, now: float | None = None) -> float:
+        """Loop sleep: short ticks only while a position is in its fast window (a new fill is picked up
+        within risk.poll_s at worst, then polled fast). Ticks with nothing due make no request."""
+        now = now if now is not None else time.time()
+        rows = [r for r in db.open_positions(self.c) if r["exit_reason"] is None]
+        return min([self.interval_for(r, s, now) for r in rows] + [s["risk.poll_s"]])
 
     def name(self, mint):
         r = self.c.execute("SELECT name FROM coins WHERE mint=?", (mint,)).fetchone()
@@ -62,11 +81,18 @@ class Risk:
         return [[telegram.url_button("Sell on FOMO", links.coin_url(mint))],
                 [telegram.cb_button("Sold", f"sold:{pos_id}")]]
 
-    async def poll(self) -> int:
+    async def poll(self, only_due: bool = False) -> int:
+        """One price poll of the open positions. only_due (the run loop): just the positions whose
+        interval_for() has passed, so fast-window positions every fast_poll_s and the rest every poll_s."""
         s = db.settings_all(self.c)
         rows = [dict(r) for r in db.open_positions(self.c)]
         live = [r for r in rows if r["exit_reason"] is None]       # "exiting" ones wait for [Sold]
         if not live: return 0                                      # paused only matters with nothing open
+        now = time.time()
+        for pid in [k for k in self.last_poll if k not in {r["id"] for r in live}]: self.last_poll.pop(pid, None)
+        if only_due: live = [r for r in live if self.due(r, s, now)]   # fast window: every fast_poll_s, else poll_s
+        if not live: return 0
+        for r in live: self.last_poll[r["id"]] = now
         mints = sorted({r["mint"] for r in live})
         pairs, failed = [], False
         for i in range(0, len(mints), DEX_BATCH):
@@ -163,13 +189,18 @@ class Risk:
 async def run(conn, bus, src):
     r = Risk(conn, bus, src)
     log.info("start")
+    filled = asyncio.Event()          # a fresh fill wakes the loop at once: its fast window starts with a poll
     async def loop():
         while True:
-            t0 = time.time()
-            try: await r.poll()
+            t0 = time.time(); filled.clear()      # a fill during this poll still wakes the next one
+            try: await r.poll(only_due=True)
             except Exception as e: log.exception("risk poll error: %s", e)
             db.heartbeat(conn, NAME)
-            await asyncio.sleep(max(1, db.settings_all(conn)["risk.poll_s"] - (time.time() - t0)))
+            try: tick = r.tick_s(db.settings_all(conn))
+            except Exception as e: log.exception("risk tick error: %s", e); tick = db.settings_all(conn)["risk.poll_s"]
+            try: await asyncio.wait_for(filled.wait(), max(1, tick - (time.time() - t0)))
+            except asyncio.TimeoutError: pass
     async def drain():                # Executor hands fills over; positions are read from db each poll
-        while True: await bus.get("risk")
+        while True:
+            await bus.get("risk"); filled.set()
     await asyncio.gather(loop(), drain(), r.live_reminders(), r.callbacks())

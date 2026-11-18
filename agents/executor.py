@@ -55,6 +55,31 @@ def recheck(liq_now, liq_scan, price_now, price_analyst, s) -> str | None:
         return "ran before the push"
     return None
 
+SPIKE_WINDOW_S = 60       # median of the coin's db.prices rows in the last 60s ...
+SPIKE_FALLBACK_N = 3      # ... or of its last 3 rows when that window is empty
+SPIKE_FALLBACK_MAX_AGE_S = 600   # fallback rows older than 10 min say nothing about "now": no reference
+
+def reference_price(c, mint, now_ts: float | None = None) -> tuple[float | None, int, str]:
+    """(median, samples, basis) from db.prices (scanner/risk/api DexScreener batches only).
+    Basis "60s" = rows in the last 60s; "last3" = the last 3 rows (none in 60s); "none" = nothing recent."""
+    import statistics
+    now_ts = now_ts if now_ts is not None else time.time()
+    since = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now_ts - SPIKE_WINDOW_S))
+    rows = [r["price"] for r in c.execute("SELECT price FROM prices WHERE mint=? AND price IS NOT NULL AND price>0 AND ts>=? "
+                                          "ORDER BY ts DESC", (mint, since))]
+    if rows: return statistics.median(rows), len(rows), "60s"
+    old = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now_ts - SPIKE_FALLBACK_MAX_AGE_S))
+    rows = [r["price"] for r in c.execute("SELECT price FROM prices WHERE mint=? AND price IS NOT NULL AND price>0 AND ts>=? "
+                                          "ORDER BY ts DESC LIMIT ?", (mint, old, SPIKE_FALLBACK_N))]
+    if rows: return statistics.median(rows), len(rows), "last3"
+    return None, 0, "none"
+
+def spike_check(price, ref, s) -> str | None:
+    """Fix 1 (2026-11-18): refuse an entry more than executor.max_entry_premium_pct above the recent median."""
+    if price and ref and price > ref * (1 + s["executor.max_entry_premium_pct"] / 100):
+        return "spike"
+    return None
+
 def push_text(mode, name, size, pct, score, stop_pct, trail_pct, audited=8) -> str:
     aud = "Auditor 8/8" if audited == 8 else "Auditor off"
     return (f"{'PAPER · ' if mode == 'PAPER' else ''}Buy {name} · ${size:.2f} · {fmt_pct(pct)}% of stack\n"
@@ -101,6 +126,13 @@ class Executor:
         if not price: return self._skip(mint, mode, link, "no price", stack, raw, cap)
         why = recheck(liq, scan.get("liquidityUsd"), price, msg.get("price_at_analyst"), s)
         if why: return self._skip(mint, mode, link, why, stack, raw, cap, price)
+        ref, n, basis = reference_price(self.c, mint)
+        why = spike_check(price, ref, s)
+        if why:
+            log.info("spike guard mint=%s entry=%s median=%s samples=%d basis=%s premium=%.1f%% max=%s%%",
+                     mint, price, ref, n, basis, 100 * (price / ref - 1), s["executor.max_entry_premium_pct"])
+            return self._skip(mint, mode, link, why, stack, raw, cap, price)
+        if ref is None: log.info("spike guard mint=%s: no recent db.prices rows, not checked", mint)
         pct = round(100 * size / stack, 1)
         name = d.get("name") or msg.get("name") or mint[:6]
         text = push_text(mode, name, size, pct, an["score"], s["risk.stop_pct"], s["risk.trail_pct"], msg.get("auditor_checked", 8))

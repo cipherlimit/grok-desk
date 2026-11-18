@@ -104,6 +104,8 @@ SPEC = {
     "executor.recheck_price_up_pct": (15, 0, 1000, "executor", ["price up"]),
     "executor.confirm_window_min": (5, 1, 60, "executor", ["buy window"]),
     "executor.paper_bar_s": (1.2, 0, 10, "executor", []),
+    # spike entry guard (user 2026-11-18, after Digital Cowboys): entry > median of the last 60s of db.prices by more than this = skip "spike"
+    "executor.max_entry_premium_pct": (15, 1, 1000, "executor", ["entry premium", "spike"]),
     # risk
     "risk.poll_s": (15, 5, 300, "risk", []),
     "risk.stop_pct": (6, 0.5, 90, "risk", ["stop"]),
@@ -114,6 +116,9 @@ SPEC = {
     "risk.confirm_window_min": (2, 1, 60, "risk", ["sell window"]),
     "risk.no_price_polls": (4, 1, 100, "risk", []),
     "risk.backoff_429_s": (30, 1, 600, "risk", []),
+    # fast early polls (user 2026-11-18): first fast_window_s after a fill, that position is checked every fast_poll_s
+    "risk.fast_window_s": (180, 0, 3600, "risk", ["fast window"]),
+    "risk.fast_poll_s": (5, 3, 300, "risk", ["fast poll"]),
     # desk
     "desk.mode": ("PAPER", ["PAPER", "LIVE"], None, "desk", ["mode"]),
     "desk.paper_start_stack": (200.0, 10, 1_000_000, "desk", ["paper stack"]),
