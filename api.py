@@ -1,6 +1,6 @@
 """STEP 7 API. Plan B (GitHub Pages): no live server; write_all() writes the same shapes as JSON files
 under output/ every [15]s and publisher.py ships them to /d/{DATA_PATH}/ (encrypted in transit).
-  state.json            GET /api/state                 balance, today %, multiplier, mode, 5 agent cards
+  state.json            GET /api/state                 mode, desk activity (today/best/signal/hourly/messages), paper balance, 5 agent cards
   chart.json            GET /api/chart?range=...       all ranges in one file: points + marks
   activity.json         GET /api/activity              rows, 30 per page; activity/p{n}.json older pages
   coin/{mint}.json      GET /api/coin/{mint}           price, candles, stats, position, exit lines, coin_url
@@ -63,7 +63,7 @@ def current_balance(c, s):
 def card_scanner(c, s, start):
     feed = []
     for r in _rows(c, "SELECT s.ts,s.mint,s.verdict,s.reason,s.liquidity_usd FROM scans s WHERE s.ts>=? ORDER BY s.id DESC LIMIT 6", (start,)):
-        feed.append({**r, "name": coin_name(c, r["mint"]), "coin_url": links.coin_url(r["mint"])})
+        feed.append({**r, "name": coin_name(c, r["mint"]), "chain": chains.chain_of(r["mint"]), "coin_url": links.coin_url(r["mint"])})
     room = db.waiting_room(c, s["scanner.max_wait_min"])
     return {"pools": _one(c, "SELECT COUNT(*) FROM coins WHERE migrated_at>=?", (start,)) or 0,
             "waiting": len(room), "passed": _one(c, "SELECT COUNT(*) FROM scans WHERE verdict='pass' AND ts>=?", (start,)) or 0,
@@ -137,6 +137,108 @@ def card_risk(c, s, start):
     return {"guarding": open_n, "last_exit": label, "stop_pct": s["risk.stop_pct"], "trail_pct": s["risk.trail_pct"],
             "pill_stop": f"stop -{fmt_pct(s['risk.stop_pct'])}%", "pill_trail": f"trail {fmt_pct(s['risk.trail_pct'])}%"}
 
+# ------------------------------------------------------------------ desk activity (home hero, 2026-11-18)
+def _money(v): return ("-$" if v < 0 else "$") + f"{abs(v):,.2f}"
+
+def _distinct(c, sql, args): return _one(c, sql, args) or 0
+
+def desk_today(c, s, start):
+    """Counts since night start, all from the ledger. Coins are counted once each (a rescan is the same coin)."""
+    q = lambda w: _distinct(c, f"SELECT COUNT(DISTINCT mint) FROM scans WHERE ts>=?{w}", (start,))
+    seen = q("")
+    by_chain = {ch: 0 for ch in (chains.SOLANA, chains.BNB)}
+    for (m,) in c.execute("SELECT DISTINCT mint FROM scans WHERE ts>=?", (start,)): by_chain[chains.chain_of(m)] += 1
+    audited = _distinct(c, "SELECT COUNT(DISTINCT mint) FROM audits WHERE ts>=?", (start,))
+    audit_red = _distinct(c, "SELECT COUNT(DISTINCT mint) FROM audits WHERE pass=0 AND ts>=?", (start,))
+    return {"seen": seen, "killed": q(" AND verdict='kill'"), "passed": q(" AND verdict='pass'"),
+            "audited": audited, "audit_rejected": audit_red,
+            "scored": _distinct(c, "SELECT COUNT(DISTINCT mint) FROM verdicts WHERE ts>=?", (start,)),
+            "signals": _distinct(c, "SELECT COUNT(*) FROM signals WHERE ts>=?", (start,)),
+            "trades": _distinct(c, "SELECT COUNT(*) FROM positions WHERE opened_at>=?", (start,)),
+            "by_chain": by_chain, "since": start}
+
+def best_candidate(c, s, start):
+    """The coin that got furthest through the desk tonight (signal > analyst pass > most audit layers passed
+    > scanner pass). If nothing passed the Scanner: the highest-liquidity coin seen, labelled 'closest call'.
+    Information only, never a buy call."""
+    best = None
+    def consider(rank, mint, ts, stage, detail):
+        nonlocal best
+        if best is None or (rank, ts) > (best["_rank"], best["ts"]):
+            best = {"_rank": rank, "mint": mint, "ts": ts, "stage": stage, "detail": detail}
+    for r in c.execute("SELECT mint,ts,status,size_usd FROM signals WHERE ts>=?", (start,)):
+        consider(5, r["mint"], r["ts"], "Signal", f"{r['status']} · {_money(r['size_usd'] or 0)}")
+    for r in c.execute("SELECT mint,ts,score,pass,reason FROM verdicts WHERE ts>=?", (start,)):
+        if r["pass"]: consider(4, r["mint"], r["ts"], "Analyst pass", f"score {r['score']}")
+        else: consider(3.5, r["mint"], r["ts"], "Analyst reject", r["reason"] or f"score {r['score']}")
+    for (m,) in c.execute("SELECT DISTINCT mint FROM audits WHERE ts>=?", (start,)):
+        d = audit_doc(c, m, s)
+        if not d: continue
+        n = sum(1 for l in d["layers"] if l["status"] == "pass")
+        if d["passed"]: consider(3.4, m, d["ts"], "Audit 8/8", "cleared all 8 layers")
+        else: consider(2 + n / 10, m, d["ts"], f"Audit {n}/8", ("refused · " + d["reason"]) if d["reason"] else "taking apart...")
+    for r in c.execute("SELECT mint,MAX(ts) ts,MAX(liquidity_usd) liq FROM scans WHERE ts>=? AND verdict='pass' GROUP BY mint", (start,)):
+        consider(1.5, r["mint"], r["ts"], "Scanner pass", f"liq ${(r['liq'] or 0) / 1000:.1f}K")
+    if best is None:
+        r = c.execute("SELECT mint,ts,liquidity_usd,reason FROM scans WHERE ts>=? AND liquidity_usd IS NOT NULL "
+                      "ORDER BY liquidity_usd DESC, id DESC LIMIT 1", (start,)).fetchone()
+        if r: consider(0, r["mint"], r["ts"], "Closest call", f"liq ${(r['liquidity_usd'] or 0) / 1000:.1f}K · killed: {r['reason'] or 'n/a'}")
+    if not best: return None
+    liq = _one(c, "SELECT liquidity_usd FROM scans WHERE mint=? ORDER BY id DESC LIMIT 1", (best["mint"],))
+    best.pop("_rank")
+    return {**best, "name": coin_name(c, best["mint"]), "chain": chains.chain_of(best["mint"]), "liquidity_usd": liq,
+            "coin_url": links.coin_url(best["mint"])}
+
+def latest_signal(c, start):
+    r = c.execute("SELECT * FROM signals WHERE ts>=? ORDER BY id DESC LIMIT 1", (start,)).fetchone()
+    if not r: return None
+    return {"mint": r["mint"], "name": coin_name(c, r["mint"]), "chain": chains.chain_of(r["mint"]), "ts": r["ts"],
+            "status": r["status"], "size_usd": r["size_usd"], "mode": r["mode"], "coin_url": r["link"] or links.coin_url(r["mint"])}
+
+def scans_hourly(c, hours=24):
+    """Coins judged by the Scanner per local hour, last `hours` hours: [[hour_start_iso, seen, killed, passed]]."""
+    now = int(time.time()); h0 = now - now % 3600 - (hours - 1) * 3600
+    buckets = {h0 + i * 3600: [0, 0, 0] for i in range(hours)}
+    since = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(h0))
+    for r in c.execute("SELECT mint, MAX(ts) ts, verdict FROM scans WHERE ts>=? GROUP BY mint", (since,)):
+        t = int(db.parse_iso(r["ts"])); b = t - t % 3600
+        if b in buckets:
+            buckets[b][0] += 1
+            if r["verdict"] == "kill": buckets[b][1] += 1
+            elif r["verdict"] == "pass": buckets[b][2] += 1
+    return [[time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(b)), *v] for b, v in sorted(buckets.items())]
+
+def agent_messages(c, s, cards, today, bal, ns):
+    """One latest line per agent (+ Grok Bot's night line), from the ledger. [{agent, text, ts}]"""
+    out = []
+    pnl = bal - ns
+    out.append({"agent": "grokbot", "ts": db.now_iso(),
+                "text": f"Night so far · {today['seen']} seen, {today['killed']} killed, {today['passed']} passed · "
+                        f"paper {_money(ns)} → {_money(bal)}"})
+    r = c.execute("SELECT closed_at ts,mint,exit_reason,pnl_usd FROM positions WHERE closed_at IS NOT NULL ORDER BY closed_at DESC LIMIT 1").fetchone()
+    g = cards["risk"]["guarding"]
+    if g: out.append({"agent": "risk", "ts": _one(c, "SELECT MAX(opened_at) FROM positions WHERE closed_at IS NULL"), "text": f"Guarding {g} open position{'s' if g > 1 else ''} · stop -{fmt_pct(s['risk.stop_pct'])}%"})
+    elif r:
+        lbl = {"trail": "Trailed out", "stop": "Stopped", "timeout": "Timed out", "pulled": "Pulled"}.get(r["exit_reason"], r["exit_reason"])
+        out.append({"agent": "risk", "ts": r["ts"], "text": f"{lbl} {coin_name(c, r['mint'])} · {_money(r['pnl_usd'] or 0)}"})
+    else: out.append({"agent": "risk", "ts": None, "text": f"No position to guard · stop -{fmt_pct(s['risk.stop_pct'])}%"})
+    L = cards["executor"]["last"]
+    out.append({"agent": "executor", "ts": L["ts"] if L else None,
+                "text": f"{L['status'].capitalize()} {L['name']} · {_money(L['size_usd'] or 0)}" if L else "No trade tonight"})
+    v = c.execute("SELECT * FROM verdicts ORDER BY id DESC LIMIT 1").fetchone()
+    out.append({"agent": "analyst", "ts": v["ts"] if v else None,
+                "text": f"{coin_name(c, v['mint'])} scored {v['score']} · {'pass' if v['pass'] else (v['reason'] or 'reject')}" if v else "Waiting for a coin to score"})
+    A = cards["auditor"]["last"]
+    out.append({"agent": "auditor", "ts": A["ts"] if A else None,
+                "text": f"{A['name']} · {cards['auditor']['status']}" if A else "No coin taken apart yet"})
+    sc = c.execute("SELECT ts,mint,verdict,reason,liquidity_usd FROM scans ORDER BY id DESC LIMIT 1").fetchone()
+    if sc:
+        t = f"Killed {coin_name(c, sc['mint'])} · {sc['reason']}" if sc["verdict"] == "kill" else \
+            f"Passed {coin_name(c, sc['mint'])} → Auditor" if sc["verdict"] == "pass" else f"Watching {coin_name(c, sc['mint'])}"
+        out.append({"agent": "scanner", "ts": sc["ts"], "text": t, "chain": chains.chain_of(sc["mint"])})
+    else: out.append({"agent": "scanner", "ts": None, "text": "Listening for graduations"})
+    return out
+
 # ------------------------------------------------------------------ documents
 def state_doc(c, s):
     start, end = db.night_bounds()
@@ -151,12 +253,15 @@ def state_doc(c, s):
     for p in db.open_positions(c):
         openp.append({"id": p["id"], "mint": p["mint"], "name": coin_name(c, p["mint"]), "size_usd": p["size_usd"],
                       "entry_price": p["entry_price"], "stop_pct": pos_stop_pct(p), "coin_url": links.coin_url(p["mint"])})
+    today = desk_today(c, s, start)
     unread = _one(c, "SELECT COUNT(*) FROM activity WHERE ts>=?", (time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 3600)),)) or 0
     return {"ts": db.now_iso(), "mode": s["desk.mode"], "balance": round(bal, 2),
             "today_pct": round(100 * (bal - ns) / ns, 2) if ns else 0.0, "multiplier": round(bal / ns, 2) if ns else 1.0,
             "night_start": start, "night_end": end, "night_start_balance": round(ns, 2),
             "running": sum(1 for a in AGENTS if not s.get(f"paused.{a}")), "agents": cards, "open_positions": openp,
-            "heartbeats": hb, "unread": unread, "stack_pct": s["executor.stack_pct"], "fomo_handle": s["desk.fomo_handle"], "hosting": s["desk.hosting"]}
+            "heartbeats": hb, "unread": unread, "stack_pct": s["executor.stack_pct"], "fomo_handle": s["desk.fomo_handle"], "hosting": s["desk.hosting"],
+            "chains": sorted(chains.enabled(s)), "today": today, "best": best_candidate(c, s, start), "signal": latest_signal(c, start),
+            "hourly": scans_hourly(c), "messages": agent_messages(c, s, cards, today, bal, ns)}
 
 RANGES = {"LIVE": "night", "1H": 3600, "4H": 4 * 3600, "1D": 86400, "1W": 7 * 86400, "ALL": None}
 
@@ -185,7 +290,8 @@ def chart_doc(c, s):
 
 def _activity_row(c, r):
     trade = r["kind"] in ("bought", "sold", "stopped")
-    return {**r, "target": ("coin" if trade else "audit"), "coin_url": links.coin_url(r["mint"]) if r["mint"] else None}
+    return {**r, "target": ("coin" if trade else "audit"), "coin_url": links.coin_url(r["mint"]) if r["mint"] else None,
+            "chain": chains.chain_of(r["mint"]) if r["mint"] else None}
 
 def activity_pages(c, max_pages=10):
     rows = [_activity_row(c, r) for r in _rows(c, "SELECT id,ts,kind,mint,agent,title,subtitle,value FROM activity ORDER BY id DESC LIMIT ?", (PAGE * max_pages,))]
@@ -247,7 +353,7 @@ def decisions(c, name, n=20):
                          "reason": d["reason"] or f"{d['layersChecked']}/8"})
     else:
         rows = _rows(c, q[name], (n,))
-    return [{**r, "name": coin_name(c, r["mint"]), "coin_url": links.coin_url(r["mint"])} for r in rows]
+    return [{**r, "name": coin_name(c, r["mint"]), "chain": chains.chain_of(r["mint"]), "coin_url": links.coin_url(r["mint"])} for r in rows]
 
 def account_doc(c, s):
     import telegram
@@ -308,7 +414,7 @@ def write_all(c, out_dir=OUT_DIR):
     atomic_write(out_dir / "account.json", account_doc(c, s))
     atomic_write(out_dir / "settings.json", settings_doc(c, s))
     atomic_write(out_dir / "coins.json", {"ts": db.now_iso(), "coins": [{"mint": m, "name": coin_name(c, m),
-                 "symbol": _one(c, "SELECT symbol FROM coins WHERE mint=?", (m,))} for m in mints]})
+                 "symbol": _one(c, "SELECT symbol FROM coins WHERE mint=?", (m,)), "chain": chains.chain_of(m)} for m in mints]})
 
 # ------------------------------------------------------------------ api.py price writer (STEP 4)
 def uncovered_mints(conn) -> list[str]:

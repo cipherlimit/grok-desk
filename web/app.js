@@ -77,7 +77,7 @@
   // ---------- skeleton ----------
   const sk = (h, w, mt) => `<div class="sk" style="height:${h}px;${w ? "width:" + w + ";" : ""}margin-top:${mt || 12}px"></div>`;
   const skel = {
-    home: () => nav() + sk(66, "70%", 8) + sk(20, "40%") + sk(220) + sk(44) + sk(28, "50%", 28) + `<div class="carousel" style="margin-top:12px"><div class="acard sk"></div></div>` + sk(60) + sk(60, null, 1),
+    home: () => nav() + sk(24, "50%", 8) + sk(66, "70%") + sk(56) + sk(110) + sk(160) + sk(44) + sk(28, "50%", 28) + `<div class="carousel" style="margin-top:12px"><div class="acard sk"></div></div>` + sk(60) + sk(60, null, 1),
     list: t => `<div class="nav"><div class="navtitle" style="margin:0">${t}</div></div>` + sk(40, "50%") + [1,2,3,4,5,6].map(() => sk(64)).join(""),
     detail: () => `<div class="nav">${backBtn()}</div>` + sk(34, "60%") + sk(44, "50%") + sk(220) + sk(120) + sk(56),
   };
@@ -95,20 +95,32 @@
     </div><div id="searchbox"></div>`;
   }
   const backBtn = () => `<a class="back" href="javascript:history.length>1?history.back():location.hash='#/home'">‹ Back</a>`;
+  const chainTag = ch => ch === "bnb" ? '<span class="ctag bnb">BNB</span>' : "";
+  // cute blob avatars, inline SVG only (no images)
+  const BLOB = {
+    grokbot: `<circle cx="20" cy="20" r="17" fill="#fff"/><path d="M12 27L28 12" stroke="#000" stroke-width="3.2" stroke-linecap="round"/>`,
+    risk: `<path d="M20 3c7 0 15 5 15 14 0 10-7 20-15 20S5 28 5 18C5 9 13 3 20 3z" fill="#ff9f0a"/>`,
+    executor: `<path d="M8 8c6-6 18-6 24 2 6 8 2 22-8 24S4 30 5 20c0-5 1-9 3-12z" fill="#bf5af2"/>`,
+    analyst: `<path d="M20 4c2 0 3 1 4 3l12 22c1.5 3 0 6-4 6H8c-4 0-5.5-3-4-6L16 7c1-2 2-3 4-3z" fill="#ff453a"/>`,
+    auditor: `<path d="M20 3l14 8v18l-14 8-14-8V11z" fill="#8e8e93" stroke-linejoin="round"/>`,
+    scanner: `<path d="M20 3l4.6 10 10.9 1.2-8.1 7.4 2.3 10.8L20 26.9l-9.7 5.5 2.3-10.8-8.1-7.4L15.4 13z" fill="#40c8e0" stroke="#40c8e0" stroke-width="2" stroke-linejoin="round"/>`,
+  };
+  const EYES = `<circle cx="15.5" cy="19" r="2.1" fill="#000"/><circle cx="24.5" cy="19" r="2.1" fill="#000"/>`;
+  const blob = (n, sz) => `<svg class="av" viewBox="0 0 40 40" width="${sz || 36}" height="${sz || 36}" aria-hidden="true">${BLOB[n] || BLOB.grokbot}${n === "grokbot" ? "" : EYES}</svg>`;
   const ICON = { bought: ["#0a84ff", "↗"], sold: ["#00d35a", "$"], stopped: ["#ff453a", "↓"], rejected: ["#8e8e93", "✕"] };
   function actRow(r) {
     const [c, g] = ICON[r.kind] || ["#8e8e93", "•"];
     const href = r.mint ? (r.target === "coin" ? "#/coin/" : "#/audit/") + r.mint : "#/activity";
     const vcls = r.kind === "sold" ? (String(r.value).startsWith("-") ? "red" : "green") : r.kind === "stopped" ? "red" : r.kind === "rejected" ? "sec" : "";
-    return `<a class="row" href="${href}"><div class="ic" style="color:${c}">${g}</div><div class="mid"><div class="t">${esc(r.title)}</div>
+    return `<a class="row" href="${href}"><div class="ic" style="color:${c}">${g}</div><div class="mid"><div class="t">${esc(r.title)}${chainTag(r.chain)}</div>
       <div class="s">${esc(r.subtitle || "")}${r.kind === "bought" || r.kind === "rejected" ? "" : " · " + hhmm(r.ts)}</div></div><div class="v ${vcls}">${esc(r.value || "")}</div></a>`;
   }
 
   // ---------- agent cards ----------
   function card(name, a, s) {
-    const head = (t, col) => `<h3><span class="sd" style="background:${a.paused ? "#ff9f0a" : col}"></span><span style="color:${col}">${t}</span>${a.paused ? '<span class="sec" style="font-weight:400">· paused</span>' : ""}</h3>`;
+    const head = (t, col) => `<h3>${blob(name, 26)}<span class="sd" style="background:${a.paused ? "#ff9f0a" : col}"></span><span style="color:${col}">${t}</span>${a.paused ? '<span class="sec" style="font-weight:400">· paused</span>' : ""}</h3>`;
     if (name === "scanner") {
-      const feed = a.feed && a.feed.length ? `<ul class="feed">${a.feed.slice(0, 5).map(f => `<li class="${f.verdict}">${ext(f.coin_url, `<span class="n">${esc(f.name)}</span>`)}<span class="r">${f.verdict === "kill" ? esc(f.reason) : f.verdict === "pass" ? "→ auditor" : "waiting"}</span></li>`).join("")}</ul>`
+      const feed = a.feed && a.feed.length ? `<ul class="feed">${a.feed.slice(0, 5).map(f => `<li class="${f.verdict}">${ext(f.coin_url, `<span class="n">${esc(f.name)}</span>`)}${chainTag(f.chain)}<span class="r">${f.verdict === "kill" ? esc(f.reason) : f.verdict === "pass" ? "→ auditor" : "waiting"}</span></li>`).join("")}</ul>`
         : `<div class="lbl" style="margin-top:14px">Listening for graduations</div>`;
       return `<div class="acard">${head("Scanner", "#64d2ff")}<div class="big">${a.pools} pools</div><div class="lbl">${a.waiting} in the waiting room · ${a.killed} killed</div>${feed}</div>`;
     }
@@ -140,30 +152,66 @@
   }
 
   // ---------- views ----------
-  let range = "LIVE";
   const V = {};
-  V.home = async function (fresh) {
+  let hrange = 12;
+  const NAMES = { grokbot: "Grok Bot", scanner: "Scanner", auditor: "Auditor", analyst: "Analyst", executor: "Executor", risk: "Risk" };
+  V.home = async function () {
     const S = cached("state.json"), C = cached("chart.json"), A = cached("activity.json");
-    if (!S || !C) return skel.home();
-    const marks = C.marks || [], pts = (C.ranges && C.ranges[range]) || [];
-    const neg = S.balance < S.night_start_balance;
+    if (!S) return skel.home();
+    const T = S.today || {}, B = S.best, G = S.signal, H = S.hourly || [], marks = (C && C.marks) || [];
+    const hbFresh = n => S.heartbeats && S.heartbeats[n] && (Date.now() - Date.parse(S.heartbeats[n])) / 1000 < 120;
+    const live = AGENTS.filter(n => !S.agents[n].paused && hbFresh(n)).length;
+    const pnl = S.balance - S.night_start_balance, neg = pnl < 0;
+    const stat = (k, v, cls) => `<div class="st"><div class="sv ${cls || ""}">${v == null ? "–" : v}</div><div class="sk2">${k}</div></div>`;
+    const bestCard = B ? `<a class="hcard" href="${B.stage.startsWith("Audit") ? "#/audit/" + B.mint : "#/coin/" + B.mint}">
+        <div class="hk">${B.stage === "Closest call" ? "Closest call tonight" : "Best candidate tonight"}</div>
+        <div class="hn">${esc(B.name)}${chainTag(B.chain)}</div><div class="hs"><span class="stage">${esc(B.stage)}</span> ${esc(B.detail || "")}</div>
+        <div class="hs ter">${B.liquidity_usd != null ? "liq " + big(B.liquidity_usd) + " · " : ""}${hhmm(B.ts)}</div></a>`
+      : `<div class="hcard"><div class="hk">Best candidate tonight</div><div class="hs sec" style="margin-top:8px">No coin judged yet tonight</div></div>`;
+    const sigCard = G ? `<div class="hcard"><div class="hk">Latest signal</div><div class="hn">${ext(G.coin_url, esc(G.name))}${chainTag(G.chain)}</div>
+        <div class="hs">${esc(G.status)} · ${money(G.size_usd)} · <span class="orange">${esc(G.mode || S.mode)}</span></div><div class="hs ter">${hhmm(G.ts)}</div></div>`
+      : `<div class="hcard"><div class="hk">Latest signal</div><div class="hs sec" style="margin-top:8px">No signal tonight. Every agent has to pass first.</div></div>`;
     const html = nav() + `
-      <div class="balrow"><div class="bal odo" id="bal"></div>${S.mode === "PAPER" ? '<span class="pill paper">PAPER</span>' : ""}</div>
-      <div class="today"><span class="${neg ? "red" : "green"}">${pct(S.today_pct)}</span><span class="sec">today</span><span class="pill mult ${neg ? "neg" : ""}">${S.multiplier.toFixed(2)}×</span></div>
-      <div class="chartbox"><canvas id="line"></canvas>${marks.length ? "" : '<div class="chartempty">Waiting for the first trade</div>'}</div>
-      <div class="ranges">${["LIVE", "1H", "4H", "1D", "1W", "ALL"].map(r => `<button data-r="${r}" class="${r === range ? "on" + (neg ? " neg" : "") : ""}">${r}</button>`).join("")}</div>
-      <div class="sechead"><h2>Agents · ${S.running} running</h2></div>
+      <div class="hero">
+        <div class="hrow"><span class="pill ${S.mode === "PAPER" ? "paper" : "livep"}">${esc(S.mode)}</span>
+          <span class="run"><i class="${live === AGENTS.length ? "" : "warn"}"></i>${live}/${AGENTS.length} agents running</span>
+          <span class="chains">${(S.chains || ["solana"]).map(c => `<span class="ctag ${c}">${c === "bnb" ? "BNB" : "SOL"}</span>`).join("")}</span></div>
+        <div class="hbig"><span class="odo" id="seen"></span><span class="hu">coins seen tonight</span></div>
+        <div class="hsince">since ${hhmm(S.night_start)} · updated ${hhmm(S.ts)}</div>
+        <div class="stats4">${stat("killed", T.killed, "red")}${stat("passed scan", T.passed, "cyan")}${stat("audited", T.audited)}${stat("signals", T.signals, T.signals ? "green" : "")}</div>
+      </div>
+      <div class="hgrid">${bestCard}${sigCard}</div>
+      <div class="sechead"><h2>Coins per hour</h2><span class="legend"><i style="background:var(--red)"></i>killed <i style="background:var(--cyan)"></i>passed <i style="background:#48484a"></i>other</span></div>
+      <div class="chartbox small"><canvas id="bars"></canvas>${H.some(h => h[1]) ? "" : '<div class="chartempty">No coins judged in this window</div>'}</div>
+      <div class="ranges">${[6, 12, 24].map(r => `<button data-h="${r}" class="${r === hrange ? "on" : ""}">${r}H</button>`).join("")}</div>
+      <div class="paperline"><span class="pill paper sm">PAPER</span> balance <b>${money(S.balance)}</b> <span class="${neg ? "red" : pnl > 0 ? "green" : "sec"}">${pnl >= 0 ? "+" : "-"}${money(Math.abs(pnl))} (${pct(S.today_pct)})</span> tonight · pretend money</div>
+      ${marks.length ? `<div class="sechead"><h2>Paper P&amp;L</h2><span class="sec" style="font-size:13px">tonight · ${marks.filter(m => m.kind !== "bought").length} exits</span></div><div class="chartbox"><canvas id="line"></canvas></div>` : ""}
+      <div class="sechead"><h2>Agents · ${S.running} running</h2><a href="#/agents">All</a></div>
       <div class="carousel" id="car">${AGENTS.map(n => card(n, S.agents[n], { stack_pct: S.stack_pct || 8 })).join("")}</div>
+      <div class="sechead"><h2>Latest from the desk</h2></div>
+      ${msgList(S)}
       <div class="sechead"><h2>Activity</h2><a href="#/activity">See all</a></div>
-      ${A && A.rows.length ? `<div class="list">${A.rows.slice(0, 5).map(actRow).join("")}</div>` : '<div class="list"><div class="empty">Nothing yet tonight</div></div>'}`;
+      ${A && A.rows.length ? `<div class="list">${A.rows.slice(0, 5).map(actRow).join("")}</div>` : '<div class="list"><div class="empty">No buys, sells or rejections yet tonight</div></div>'}`;
     return { html, after: () => {
-      odometer($("#bal"), money(S.balance));
-      Charts.line($("#line"), marks.length ? pts : [], C.start_value, marks, { color: neg ? "#ff453a" : "#00d35a" });
+      odometer($("#seen"), String(T.seen == null ? 0 : T.seen));
+      Charts.bars($("#bars"), H.slice(-hrange));
+      if (marks.length && C) Charts.line($("#line"), (C.ranges && C.ranges.LIVE) || [], C.start_value, marks, { color: neg ? "#ff453a" : "#00d35a" });
       const L = S.agents.analyst.last; const rg = $("#ring"); if (rg) Charts.ring(rg, L ? L.score : null, S.agents.analyst.green_from);
-      document.querySelectorAll(".ranges button").forEach(b => b.onclick = () => { range = b.dataset.r; render(); });
+      document.querySelectorAll(".ranges button").forEach(b => b.onclick = () => { hrange = +b.dataset.h; render(); });
       hookSearch();
     }, keepScroll: ["#car"] };
   };
+  function msgList(S) {
+    const M = S.messages || [];
+    if (!M.length) return '<div class="list"><div class="empty">No messages yet</div></div>';
+    let seen = 0; try { seen = +localStorage.getItem("desk_seen") || 0; } catch (e) {}
+    return `<div class="list">${M.map(m => {
+      const fresh = m.ts && Date.parse(m.ts) > seen && m.agent !== "grokbot";
+      const href = m.agent === "grokbot" ? "#/activity" : "#/agents";
+      return `<a class="row msg" href="${href}"><div class="blob">${blob(m.agent)}</div><div class="mid"><div class="t"><b>${NAMES[m.agent] || esc(m.agent)}</b>${m.ts && m.agent !== "grokbot" ? `<span class="tm">${hhmm(m.ts)}</span>` : ""}</div>
+        <div class="s">${esc(m.text)}${chainTag(m.chain)}</div></div>${fresh ? '<i class="udot"></i>' : ""}</a>`;
+    }).join("")}</div>`;
+  }
   V.agents = async function () {
     const S = cached("state.json");
     if (!S) return skel.list("Agents");
@@ -171,12 +219,12 @@
     for (const n of AGENTS) docs[n] = cached("agents/" + n + ".json");
     const count = { scanner: a => `${a.pools} pools · ${a.killed} killed · ${a.passed} passed`, auditor: a => `${a.taken_apart} taken apart · ${a.rejected} rejected`,
       analyst: a => `${a.scored} scored`, executor: a => `${a.trades} trades · ${a.skipped} skipped`, risk: a => `${a.guarding} guarding` };
-    const html = `<div class="nav"><div class="navtitle" style="margin:0">Agents</div></div><div class="ptitle">Agents · ${S.running} running</div>` + AGENTS.map(n => {
+    const html = `<div class="nav"><div class="navtitle" style="margin:0">Agents</div></div><div class="ptitle">Agents · ${S.running} running</div><div class="hrow" style="margin:-8px 0 14px"><span class="pill ${S.mode === "PAPER" ? "paper" : "livep"}">${esc(S.mode)}</span><span class="sec" style="font-size:13px">notify only · every trade needs your OK</span></div>${msgList(S)}<div style="height:16px"></div>` + AGENTS.map(n => {
       const a = S.agents[n], d = docs[n], lock = n === "risk" && (S.open_positions || []).length > 0;
       const hb = a.heartbeat ? (Date.now() - Date.parse(a.heartbeat)) / 1000 : 1e9;
       const st = a.paused ? "paused" : hb > 120 ? "down" : "running";
-      const dec = d && d.decisions.length ? `<ul class="dec">${d.decisions.map(x => `<li><span class="tm">${hhmm(x.ts)}</span>${ext(x.coin_url, esc(x.name))}<span class="rs ${/kill|red|reject|stop|skipped/.test(x.verdict) ? "red" : /pass|bought|trail/.test(x.verdict) ? "green" : ""}">${esc(x.verdict)}${x.reason ? " · " + esc(x.reason) : ""}</span></li>`).join("")}</ul>` : `<div class="empty">${n === "scanner" ? "Listening for graduations" : n === "auditor" ? "No coin taken apart yet" : "No decisions yet"}</div>`;
-      return `<div class="fcard" id="ag-${n}"><div class="fhead"><span class="nm" style="color:${a.color}">${a.name}</span>
+      const dec = d && d.decisions.length ? `<ul class="dec">${d.decisions.map(x => `<li><span class="tm">${hhmm(x.ts)}</span><span class="dn">${ext(x.coin_url, esc(x.name))}${chainTag(x.chain)}</span><span class="rs ${/kill|red|reject|stop|skipped/.test(x.verdict) ? "red" : /pass|bought|trail/.test(x.verdict) ? "green" : ""}">${esc(x.verdict)}${x.reason ? " · " + esc(x.reason) : ""}</span></li>`).join("")}</ul>` : `<div class="empty">${n === "scanner" ? "Listening for graduations" : n === "auditor" ? "No coin taken apart yet" : "No decisions yet"}</div>`;
+      return `<div class="fcard" id="ag-${n}"><div class="fhead">${blob(n, 30)}<span class="nm" style="color:${a.color}">${a.name}</span>
         <span class="status ${st === "running" ? "" : "paused"}"><i style="${st === "down" ? "background:#ff453a" : ""}"></i>${st}</span>
         <span class="swwrap"><span class="switch ${a.paused ? "" : "on"}" role="switch" aria-checked="${!a.paused}" aria-disabled="true"></span></span></div>
         <div class="count">${count[n](a)} today</div>${dec}

@@ -199,3 +199,49 @@ main{padding:0 16px calc(96px + var(--bot))}
 @media (prefers-reduced-motion: reduce){
   *{animation:none!important;transition:none!important}
 }
+
+/* desk-activity hero (2026-11-18: no balance hero; the balance is a small PAPER line) */
+.hero{background:linear-gradient(180deg,#121214,#0b0b0c);border-radius:22px;padding:16px 18px 14px;margin-top:6px;border:.5px solid var(--sep)}
+.hrow{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.livep{background:var(--red);color:#fff}
+.pill.sm{height:18px;padding:0 6px;font-size:11px;border-radius:9px}
+.run{display:flex;align-items:center;gap:6px;font-size:15px;font-weight:600}
+.run i{width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:0 0 0 4px rgba(0,211,90,.18);animation:pulse 1.6s infinite alternate}
+.run i.warn{background:var(--orange);box-shadow:0 0 0 4px rgba(255,159,10,.18)}
+.chains{margin-left:auto;display:flex;gap:4px}
+.ctag{display:inline-flex;align-items:center;height:17px;padding:0 5px;border-radius:5px;font-size:10px;font-weight:700;letter-spacing:.3px;
+  background:rgba(100,210,255,.14);color:var(--cyan);margin-left:6px;vertical-align:middle;flex:0 0 auto}
+.chains .ctag{margin-left:0}
+.ctag.solana{background:rgba(191,90,242,.18);color:#d39cf7}
+.ctag.bnb{background:rgba(240,185,11,.18);color:#f0b90b}
+.hbig{display:flex;align-items:baseline;gap:10px;margin-top:14px}
+.hbig .odo{font-family:var(--display);font-weight:700;font-size:60px;letter-spacing:-1.5px;line-height:1}
+.hu{font-size:17px;color:var(--sec)}
+.hsince{font-size:13px;color:var(--ter);margin-top:4px}
+.stats4{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:14px}
+.st{background:rgba(255,255,255,.05);border-radius:12px;padding:8px 6px;text-align:center}
+.st .sv{font-family:var(--display);font-size:22px;font-weight:700}
+.st .sk2{font-size:11px;color:var(--sec);margin-top:1px}
+.hgrid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}
+.hcard{background:var(--c1);border-radius:16px;padding:12px 14px;min-height:104px;display:block;overflow:hidden}
+.hk{font-size:12px;color:var(--sec);text-transform:uppercase;letter-spacing:.4px}
+.hn{font-size:17px;font-weight:700;margin-top:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hs{font-size:13px;margin-top:3px;line-height:1.3}
+.stage{color:var(--green);font-weight:600}
+.chartbox.small{height:150px}
+.legend{font-size:12px;color:var(--sec);display:flex;align-items:center;gap:4px}
+.legend i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-left:6px}
+.ranges button.on{color:#000;background:var(--green)}
+.paperline{margin-top:10px;font-size:13px;color:var(--sec);display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.paperline b{color:var(--text);font-weight:600}
+.av{display:block;flex:0 0 auto}
+.acard h3 .av{margin-right:-2px}
+.msg .blob{width:40px;height:40px;display:grid;place-items:center;flex:0 0 40px}
+.msg .t{display:flex;align-items:baseline;gap:8px}
+.msg .t b{font-weight:600}
+.msg .tm{font-size:12px;color:var(--ter);margin-left:auto}
+.msg .s{white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.udot{width:9px;height:9px;border-radius:50%;background:var(--blue);flex:0 0 9px}
+.feed li{justify-content:flex-start;align-items:center}
+.feed li .r{margin-left:auto}
+.dec li .dn{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:flex;align-items:center;min-width:0}

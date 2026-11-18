@@ -105,5 +105,29 @@
 
   function roundRect(x, l, t, w, h, r) { x.beginPath(); x.moveTo(l + r, t); x.arcTo(l + w, t, l + w, t + h, r); x.arcTo(l + w, t + h, l, t + h, r); x.arcTo(l, t + h, l, t, r); x.arcTo(l, t, l + w, t, r); x.closePath(); }
   function easeOut(p) { return 1 - Math.pow(1 - p, 3); }
-  window.Charts = { line, candles, ring };
+  
+  /* Coins per hour: rows [[hour_iso, seen, killed, passed]], stacked bars (killed red, passed cyan, rest grey). */
+  function bars(cv, rows) {
+    const [x, w, h] = setup(cv);
+    const padT = 18, padB = 20, n = rows.length;
+    if (!n) return;
+    const hi = Math.max(1, ...rows.map(r => r[1]));
+    const gw = w / n, bw = Math.max(4, Math.min(22, gw * 0.62)), Y = v => (h - padB - padT) * v / hi;
+    x.strokeStyle = "rgba(84,84,88,.55)"; x.lineWidth = 0.5; x.beginPath(); x.moveTo(0, h - padB + 0.5); x.lineTo(w, h - padB + 0.5); x.stroke();
+    x.font = FONT; x.textAlign = "center";
+    rows.forEach((r, i) => {
+      const cx = gw * i + gw / 2, [_, seen, killed, passed] = r, other = Math.max(0, seen - killed - passed);
+      let y = h - padB;
+      const seg = (v, col) => { if (!v) return; const hh = Y(v); x.fillStyle = col; x.beginPath();
+        if (x.roundRect) x.roundRect(cx - bw / 2, y - hh, bw, hh, 3); else x.rect(cx - bw / 2, y - hh, bw, hh); x.fill(); y -= hh + 1; };
+      seg(killed, "#ff453a"); seg(passed, "#64d2ff"); seg(other, "#48484a");
+      if (seen) { x.fillStyle = "rgba(235,235,245,.6)"; x.fillText(String(seen), cx, y - 4); }
+      const step = n > 12 ? 4 : n > 6 ? 2 : 1;
+      if (i % step === 0 || i === n - 1) {
+        x.fillStyle = "rgba(235,235,245,.3)";
+        x.fillText(new Date(r[0]).toLocaleTimeString([], { hour: "2-digit", hour12: false }), cx, h - 5);
+      }
+    });
+  }
+  window.Charts = { line, candles, ring, bars };
 })();
