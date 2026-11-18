@@ -21,7 +21,7 @@ def main():
     d = report.build(c, start, end)
     OUT_DIR.mkdir(exist_ok=True)
     md = OUT_DIR / f"night_report_{d['date_iso']}.md"; js = md.with_suffix(".json")
-    md.write_text(report.to_markdown(d)); js.write_text(json.dumps(d, indent=1))
+    md.write_text(report.to_markdown(d), encoding="utf-8"); js.write_text(json.dumps(d, indent=1), encoding="utf-8")
     cleared = 0
     if a.clear_skips:
         cleared = c.execute("DELETE FROM skips").rowcount; c.commit()

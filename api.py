@@ -45,7 +45,7 @@ def pos_stop_pct(p): return round((1 - p["stop_price"] / p["entry_price"]) * 100
 def atomic_write(path, obj):
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(obj, separators=(",", ":"), ensure_ascii=False))
+    tmp.write_text(json.dumps(obj, separators=(",", ":"), ensure_ascii=False), encoding="utf-8")
     os.replace(tmp, path)
 
 def night_start_balance(c, s):
@@ -333,4 +333,4 @@ def plan_a(name: str, x_app_token: str | None = Header(None)):
     if not secret("APP_TOKEN") or x_app_token != secret("APP_TOKEN"): raise HTTPException(401)
     p = OUT_DIR / f"{name}.json"
     if not p.exists(): raise HTTPException(404)
-    return json.loads(p.read_text())
+    return json.loads(p.read_text(encoding="utf-8"))

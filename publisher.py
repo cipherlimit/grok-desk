@@ -58,7 +58,7 @@ def pack() -> str:
                        key=lambda f: (f[0].startswith("activity/") is False, f[1].stat().st_mtime))
     pos_mints = set()
     try:
-        st = json.loads((OUT_DIR / "state.json").read_text())
+        st = json.loads((OUT_DIR / "state.json").read_text(encoding="utf-8"))
         pos_mints = {p["mint"] for p in st.get("open_positions", [])}
     except Exception: pass
     droppable = [f for f in droppable if not any(m in f[0] for m in pos_mints)]

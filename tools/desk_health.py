@@ -38,7 +38,7 @@ def procs() -> dict:
 def ws_reconnects(hours=1.0) -> int:
     cutoff = dt.datetime.now() - dt.timedelta(hours=hours); n = 0
     for f in sorted(LOG_DIR.glob("scanner.log*")):
-        try: lines = f.read_text(errors="replace").splitlines()
+        try: lines = f.read_text(encoding="utf-8", errors="replace").splitlines()
         except OSError: continue
         for line in lines:
             if "reconnect in" not in line: continue

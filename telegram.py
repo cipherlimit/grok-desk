@@ -8,7 +8,7 @@ from config import secret, OWNER_FILE, LOG_DIR, OUT_DIR
 log = logging.getLogger("telegram")
 if not log.handlers:
     LOG_DIR.mkdir(parents=True, exist_ok=True)
-    h = logging.handlers.TimedRotatingFileHandler(LOG_DIR / "telegram.log", when="midnight", backupCount=14)
+    h = logging.handlers.TimedRotatingFileHandler(LOG_DIR / "telegram.log", when="midnight", backupCount=14, encoding="utf-8")
     h.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s")); log.addHandler(h); log.setLevel(logging.INFO)
     log.propagate = False
 
@@ -193,7 +193,7 @@ class Desk:
 
     def _executor_reason(self, mint):
         try:
-            for line in reversed((LOG_DIR / "executor.log").read_text().splitlines()[-2000:]):
+            for line in reversed((LOG_DIR / "executor.log").read_text(encoding="utf-8", errors="replace").splitlines()[-2000:]):
                 if f"mint={mint}" in line and "reason=" in line:
                     return line.split("reason=", 1)[1].split(" link=")[0]
         except OSError: pass
