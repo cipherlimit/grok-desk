@@ -245,3 +245,4 @@ main{padding:0 16px calc(96px + var(--bot))}
 .feed li{justify-content:flex-start;align-items:center}
 .feed li .r{margin-left:auto}
 .dec li .dn{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:flex;align-items:center;min-width:0}
+.stage.bad{color:var(--orange)}

@@ -165,7 +165,7 @@
     const stat = (k, v, cls) => `<div class="st"><div class="sv ${cls || ""}">${v == null ? "–" : v}</div><div class="sk2">${k}</div></div>`;
     const bestCard = B ? `<a class="hcard" href="${B.stage.startsWith("Audit") ? "#/audit/" + B.mint : "#/coin/" + B.mint}">
         <div class="hk">${B.stage === "Closest call" ? "Closest call tonight" : "Best candidate tonight"}</div>
-        <div class="hn">${esc(B.name)}${chainTag(B.chain)}</div><div class="hs"><span class="stage">${esc(B.stage)}</span> ${esc(B.detail || "")}</div>
+        <div class="hn">${esc(B.name)}${chainTag(B.chain)}</div><div class="hs"><span class="stage ${/reject|Closest/.test(B.stage) || /refused/.test(B.detail || "") ? "bad" : ""}">${esc(B.stage)}</span> ${esc(B.detail || "")}</div>
         <div class="hs ter">${B.liquidity_usd != null ? "liq " + big(B.liquidity_usd) + " · " : ""}${hhmm(B.ts)}</div></a>`
       : `<div class="hcard"><div class="hk">Best candidate tonight</div><div class="hs sec" style="margin-top:8px">No coin judged yet tonight</div></div>`;
     const sigCard = G ? `<div class="hcard"><div class="hk">Latest signal</div><div class="hn">${ext(G.coin_url, esc(G.name))}${chainTag(G.chain)}</div>
