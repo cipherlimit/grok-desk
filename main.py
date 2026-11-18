@@ -4,7 +4,7 @@ import asyncio, json, os, signal, time
 import db
 from bus import bus
 from config import DEFAULTS, OUT_DIR, TICK_S, LOG_DIR
-from agents import scanner, auditor, analyst, executor, risk
+from agents import scanner, auditor, analyst, executor, risk, feed
 from agents.base import agent_logger
 from sources import Sources
 from config import rpc_url_for
@@ -64,9 +64,11 @@ async def amain():
         tasks.append(asyncio.create_task(m.run(conn, bus, src), name=m.NAME))
     tasks.append(asyncio.create_task(telegram.poll(conn, bus, src), name="telegram"))
     tasks.append(asyncio.create_task(api.price_loop(conn, src), name="api_prices"))
+    tasks.append(asyncio.create_task(feed.run(conn, bus, src), name="feed"))
     def _died(t):
         if not t.cancelled() and t.exception():
             log.error("task %s died: %r", t.get_name(), t.exception())
+            feed.note(f"task {t.get_name()} died ({type(t.exception()).__name__}); the health check restarts the desk")
     for t in tasks: t.add_done_callback(_died)
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()

@@ -123,6 +123,9 @@ SPEC = {
     "desk.hosting": ("planB_github_pages", "text", None, "desk", []),
     "desk.publish_every_s": (180, 60, 3600, "desk", []),
     "api.prices_every_s": (60, 15, 600, "desk", []),
+    # feed (user 2026-11-18): every desk event to Telegram; good_liq 0 = follow scanner.min_liquidity_usd
+    "feed.enabled": (True, None, None, "desk", ["feed"]),
+    "feed.good_liq_usd": (0, 0, 10_000_000, "desk", ["good liq", "good liquidity"]),
 }
 DEFAULTS = {k: v[0] for k, v in SPEC.items()}
 DEFAULTS.update({f"paused.{a}": False for a in ("scanner", "auditor", "analyst", "executor", "risk")})

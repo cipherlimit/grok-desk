@@ -6,6 +6,7 @@ import websockets
 import db, fields, onchain
 from sources import PUMPPORTAL_WS, DEX_BATCH, RateLimited, SourceError, with_retry
 from agents.base import agent_logger, paused
+from agents import feed
 
 NAME = "scanner"
 log = agent_logger(NAME)
@@ -74,8 +75,10 @@ class Scanner:
                             log.info("ws message (no mint): %s", str(msg)[:120])
             except asyncio.TimeoutError:
                 log.warning("ws silent for %ss, reconnect in %ss", self.s["scanner.ws_silent_s"], backoff)
+                feed.note(f"Scanner websocket silent for {self.s['scanner.ws_silent_s']}s, reconnecting in {backoff}s")
             except Exception as e:
                 log.warning("ws closed (%s), reconnect in %ss", type(e).__name__, backoff)
+                feed.note(f"Scanner websocket closed ({type(e).__name__}), reconnecting in {backoff}s")
             await asyncio.sleep(backoff)
             backoff = min(backoff * 2, self.s["scanner.ws_backoff_max_s"])
 

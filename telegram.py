@@ -51,6 +51,7 @@ HELP = ("Commands:\n"
         "pause Scanner · resume Scanner (any agent; Risk not while a position is open)\n"
         "set stop to -8% (any setting by name or alias)\n"
         "stack 1240 · status · paper · live · invite · report · test\n"
+        "feed · feed on · feed off (every desk event here; off = mute)\n"
         "X = name, symbol or mint")
 AGENTS = ["scanner", "auditor", "analyst", "executor", "risk"]
 
@@ -121,6 +122,8 @@ class Desk:
             return f"New to FOMO? {links.SIGNUP_URL}", None
         if low == "report": return self.cmd_report()
         if low in ("test", "test push"): return self.cmd_test()
+        m = re.fullmatch(r"feed(?:\s+(on|off))?", low)
+        if m: return self.cmd_feed(m.group(1))
         return HELP, None
 
     # ---------- commands ----------
@@ -274,6 +277,20 @@ class Desk:
         url = links.coin_url(r["mint"], "solana")
         return (f"PAPER · Test push · Grok Bot · now\n{self.name(r['mint'])} · test only, no position, no order\n{url}",
                 [[url_button("Buy on FOMO", url)]])
+
+    def cmd_feed(self, arg=None):
+        """feed on / feed off / feed: the live event feed (agents/feed.py). Default on."""
+        import db
+        from agents.feed import good_liq_usd
+        if arg: db.set_setting(self.c, "feed.enabled", arg == "on", who="telegram")
+        s = db.settings_all(self.c)
+        on = bool(s.get("feed.enabled", True))
+        thr = good_liq_usd(s)
+        src = "your setting" if (s.get("feed.good_liq_usd") or 0) > 0 else "the Scanner's min liquidity"
+        if arg == "off": return "Feed off: desk events are no longer sent here. Send `feed on` to turn it back on.", None
+        head = "Feed on: you get every desk event here." if on else "Feed off (muted). Send `feed on` to turn it back on."
+        return (f"{head}\nGood-liquidity alert at ${thr:,.0f} ({src}). Change it with `set good liq to 30000` "
+                f"(0 = follow the Scanner).\nSend `feed off` to mute."), None
 
     def cmd_report(self):
         p = OUT_DIR / "last_page_url.txt"
