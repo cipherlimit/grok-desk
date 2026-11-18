@@ -159,8 +159,7 @@
     const S = cached("state.json"), C = cached("chart.json"), A = cached("activity.json");
     if (!S) return skel.home();
     const T = S.today || {}, B = S.best, G = S.signal, H = S.hourly || [], marks = (C && C.marks) || [];
-    const hbFresh = n => S.heartbeats && S.heartbeats[n] && (Date.now() - Date.parse(S.heartbeats[n])) / 1000 < 120;
-    const live = AGENTS.filter(n => !S.agents[n].paused && hbFresh(n)).length;
+    const live = DeskHB.live(S, AGENTS);
     const pnl = S.balance - S.night_start_balance, neg = pnl < 0;
     const stat = (k, v, cls) => `<div class="st"><div class="sv ${cls || ""}">${v == null ? "–" : v}</div><div class="sk2">${k}</div></div>`;
     const bestCard = B ? `<a class="hcard" href="${B.stage.startsWith("Audit") ? "#/audit/" + B.mint : "#/coin/" + B.mint}">
@@ -221,8 +220,8 @@
       analyst: a => `${a.scored} scored`, executor: a => `${a.trades} trades · ${a.skipped} skipped`, risk: a => `${a.guarding} guarding` };
     const html = `<div class="nav"><div class="navtitle" style="margin:0">Agents</div></div><div class="ptitle">Agents · ${S.running} running</div><div class="hrow" style="margin:-8px 0 14px"><span class="pill ${S.mode === "PAPER" ? "paper" : "livep"}">${esc(S.mode)}</span><span class="sec" style="font-size:13px">notify only · every trade needs your OK</span></div>${msgList(S)}<div style="height:16px"></div>` + AGENTS.map(n => {
       const a = S.agents[n], d = docs[n], lock = n === "risk" && (S.open_positions || []).length > 0;
-      const hb = a.heartbeat ? (Date.now() - Date.parse(a.heartbeat)) / 1000 : 1e9;
-      const st = a.paused ? "paused" : hb > 120 ? "down" : "running";
+      const hb = DeskHB.age(S, a.heartbeat); 
+      const st = a.paused ? "paused" : (hb == null || hb >= DeskHB.FRESH_S) ? "down" : "running";
       const dec = d && d.decisions.length ? `<ul class="dec">${d.decisions.map(x => `<li><span class="tm">${hhmm(x.ts)}</span><span class="dn">${ext(x.coin_url, esc(x.name))}${chainTag(x.chain)}</span><span class="rs ${/kill|red|reject|stop|skipped/.test(x.verdict) ? "red" : /pass|bought|trail/.test(x.verdict) ? "green" : ""}">${esc(x.verdict)}${x.reason ? " · " + esc(x.reason) : ""}</span></li>`).join("")}</ul>` : `<div class="empty">${n === "scanner" ? "Listening for graduations" : n === "auditor" ? "No coin taken apart yet" : "No decisions yet"}</div>`;
       return `<div class="fcard" id="ag-${n}"><div class="fhead">${blob(n, 30)}<span class="nm" style="color:${a.color}">${a.name}</span>
         <span class="status ${st === "running" ? "" : "paused"}"><i style="${st === "down" ? "background:#ff453a" : ""}"></i>${st}</span>
