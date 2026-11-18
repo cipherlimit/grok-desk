@@ -1,0 +1,494 @@
+{
+ "data": [
+  {
+   "id": "bsc_0x3b5e79d38dcb4b98ce52f1c2ef47df57f1f45f66",
+   "type": "pool",
+   "attributes": {
+    "base_token_price_usd": "0.000000000000259351278849297",
+    "base_token_price_native_currency": "0.000000000000000443510760869565",
+    "quote_token_price_usd": "589.14",
+    "quote_token_price_native_currency": "1.0",
+    "base_token_price_quote_token": "0.0000000000000004435107609",
+    "quote_token_price_base_token": "2254736723950870.0",
+    "address": "0x3b5e79d38dcb4b98ce52f1c2ef47df57f1f45f66",
+    "name": "BROCCOLI / WBNB",
+    "pool_created_at": "2026-11-18T13:15:48Z",
+    "fdv_usd": "0.05965079412",
+    "market_cap_usd": null,
+    "price_change_percentage": {
+     "m5": "0",
+     "m15": "0",
+     "m30": "0",
+     "h1": "0",
+     "h6": "0",
+     "h24": "0"
+    },
+    "transactions": {
+     "m5": {
+      "buys": 1,
+      "sells": 0,
+      "buyers": 1,
+      "sellers": 0,
+      "unique_traders": 1
+     },
+     "m15": {
+      "buys": 1,
+      "sells": 0,
+      "buyers": 1,
+      "sellers": 0,
+      "unique_traders": 1
+     },
+     "m30": {
+      "buys": 1,
+      "sells": 0,
+      "buyers": 1,
+      "sellers": 0,
+      "unique_traders": 1
+     },
+     "h1": {
+      "buys": 1,
+      "sells": 0,
+      "buyers": 1,
+      "sellers": 0,
+      "unique_traders": 1
+     },
+     "h6": {
+      "buys": 1,
+      "sells": 0,
+      "buyers": 1,
+      "sellers": 0,
+      "unique_traders": 1
+     },
+     "h24": {
+      "buys": 1,
+      "sells": 0,
+      "buyers": 1,
+      "sellers": 0,
+      "unique_traders": 1
+     }
+    },
+    "volume_usd": {
+     "m5": "0.00058914",
+     "m15": "0.00058914",
+     "m30": "0.00058914",
+     "h1": "0.00058914",
+     "h6": "0.00058914",
+     "h24": "0.00058914"
+    },
+    "reserve_in_usd": "0.1178"
+   },
+   "relationships": {
+    "base_token": {
+     "data": {
+      "id": "bsc_0x98d6400db9cc58628ce949e6a516b2099d7eed13",
+      "type": "token"
+     }
+    },
+    "quote_token": {
+     "data": {
+      "id": "bsc_0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c",
+      "type": "token"
+     }
+    },
+    "dex": {
+     "data": {
+      "id": "pancakeswap_v2",
+      "type": "dex"
+     }
+    }
+   }
+  },
+  {
+   "id": "bsc_0x8768d5933dd3885c7dc5cade99128bb3c0c12ce29d57ff2cad1b3124df41f613",
+   "type": "pool",
+   "attributes": {
+    "base_token_price_usd": "0.0000519616712259475",
+    "base_token_price_native_currency": "0.0000000881902091411192",
+    "quote_token_price_usd": "589.2",
+    "quote_token_price_native_currency": "1.0",
+    "base_token_price_quote_token": "0.00000008819020914",
+    "quote_token_price_base_token": "11339127.2085525",
+    "address": "0x8768d5933dd3885c7dc5cade99128bb3c0c12ce29d57ff2cad1b3124df41f613",
+    "name": "ちいかわ / BNB 0.166%",
+    "pool_created_at": "2026-11-18T13:14:08Z",
+    "fdv_usd": "51961.67123",
+    "market_cap_usd": null,
+    "price_change_percentage": {
+     "m5": "0",
+     "m15": "0",
+     "m30": "0",
+     "h1": "0",
+     "h6": "0",
+     "h24": "0"
+    },
+    "transactions": {
+     "m5": {
+      "buys": 1,
+      "sells": 0,
+      "buyers": 1,
+      "sellers": 0,
+      "unique_traders": 1
+     },
+     "m15": {
+      "buys": 1,
+      "sells": 0,
+      "buyers": 1,
+      "sellers": 0,
+      "unique_traders": 1
+     },
+     "m30": {
+      "buys": 1,
+      "sells": 0,
+      "buyers": 1,
+      "sellers": 0,
+      "unique_traders": 1
+     },
+     "h1": {
+      "buys": 1,
+      "sells": 0,
+      "buyers": 1,
+      "sellers": 0,
+      "unique_traders": 1
+     },
+     "h6": {
+      "buys": 1,
+      "sells": 0,
+      "buyers": 1,
+      "sellers": 0,
+      "unique_traders": 1
+     },
+     "h24": {
+      "buys": 1,
+      "sells": 0,
+      "buyers": 1,
+      "sellers": 0,
+      "unique_traders": 1
+     }
+    },
+    "volume_usd": {
+     "m5": "6.1289401775",
+     "m15": "6.1289401775",
+     "m30": "6.1289401775",
+     "h1": "6.1289401775",
+     "h6": "6.1289401775",
+     "h24": "6.1289401775"
+    },
+    "reserve_in_usd": "21.0872766430211"
+   },
+   "relationships": {
+    "base_token": {
+     "data": {
+      "id": "bsc_0xa8b0f9b30e9f69c58c81fce51617336403fe7777",
+      "type": "token"
+     }
+    },
+    "quote_token": {
+     "data": {
+      "id": "bsc_0x0000000000000000000000000000000000000000",
+      "type": "token"
+     }
+    },
+    "dex": {
+     "data": {
+      "id": "pancakeswap-infinity-clmm",
+      "type": "dex"
+     }
+    }
+   }
+  },
+  {
+   "id": "bsc_0x18b6074597e2813339ed3b21faec67e8d80f5ae9",
+   "type": "pool",
+   "attributes": {
+    "base_token_price_usd": "0.0000337072559087321",
+    "base_token_price_native_currency": "0.0000000582596342447635",
+    "quote_token_price_usd": "589.14",
+    "quote_token_price_native_currency": "1.0",
+    "base_token_price_quote_token": "0.00000005825963424",
+    "quote_token_price_base_token": "17164543.0487728",
+    "address": "0x18b6074597e2813339ed3b21faec67e8d80f5ae9",
+    "name": "ちいか / WBNB",
+    "pool_created_at": "2026-11-18T13:13:12Z",
+    "fdv_usd": "33707.25591",
+    "market_cap_usd": null,
+    "price_change_percentage": {
+     "m5": "20.126",
+     "m15": "84.948",
+     "m30": "84.948",
+     "h1": "84.948",
+     "h6": "84.948",
+     "h24": "84.948"
+    },
+    "transactions": {
+     "m5": {
+      "buys": 17,
+      "sells": 20,
+      "buyers": 16,
+      "sellers": 18,
+      "unique_traders": 27
+     },
+     "m15": {
+      "buys": 41,
+      "sells": 45,
+      "buyers": 37,
+      "sellers": 24,
+      "unique_traders": 38
+     },
+     "m30": {
+      "buys": 41,
+      "sells": 45,
+      "buyers": 37,
+      "sellers": 24,
+      "unique_traders": 38
+     },
+     "h1": {
+      "buys": 41,
+      "sells": 45,
+      "buyers": 37,
+      "sellers": 24,
+      "unique_traders": 38
+     },
+     "h6": {
+      "buys": 41,
+      "sells": 45,
+      "buyers": 37,
+      "sellers": 24,
+      "unique_traders": 38
+     },
+     "h24": {
+      "buys": 41,
+      "sells": 45,
+      "buyers": 37,
+      "sellers": 24,
+      "unique_traders": 38
+     }
+    },
+    "volume_usd": {
+     "m5": "2533.4826264568",
+     "m15": "5786.2591087874",
+     "m30": "5786.2591087874",
+     "h1": "5786.2591087874",
+     "h6": "5786.2591087874",
+     "h24": "5786.2591087874"
+    },
+    "reserve_in_usd": "10008.1336"
+   },
+   "relationships": {
+    "base_token": {
+     "data": {
+      "id": "bsc_0x92eb7e544f49242a9da17b19438e7ef5d92e7777",
+      "type": "token"
+     }
+    },
+    "quote_token": {
+     "data": {
+      "id": "bsc_0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c",
+      "type": "token"
+     }
+    },
+    "dex": {
+     "data": {
+      "id": "pancakeswap_v2",
+      "type": "dex"
+     }
+    }
+   }
+  },
+  {
+   "id": "bsc_0x86490c3ba276594333de2eebfdb467e57cc3ffff",
+   "type": "pool",
+   "attributes": {
+    "base_token_price_usd": "0.00000322539861179777",
+    "base_token_price_native_currency": "0.00000000547512920013202",
+    "quote_token_price_usd": "589.1",
+    "quote_token_price_native_currency": "1.0",
+    "base_token_price_quote_token": "0.0000000054751292",
+    "quote_token_price_base_token": "182644091.755111",
+    "address": "0x86490c3ba276594333de2eebfdb467e57cc3ffff",
+    "name": "ワンピース / BNB",
+    "pool_created_at": "2026-11-18T13:16:01Z",
+    "fdv_usd": "3225.398612",
+    "market_cap_usd": null,
+    "price_change_percentage": {
+     "m5": "0",
+     "m15": "0",
+     "m30": "0",
+     "h1": "0",
+     "h6": "0",
+     "h24": "0"
+    },
+    "transactions": {
+     "m5": {
+      "buys": 1,
+      "sells": 0,
+      "buyers": 1,
+      "sellers": 0,
+      "unique_traders": 1
+     },
+     "m15": {
+      "buys": 1,
+      "sells": 0,
+      "buyers": 1,
+      "sellers": 0,
+      "unique_traders": 1
+     },
+     "m30": {
+      "buys": 1,
+      "sells": 0,
+      "buyers": 1,
+      "sellers": 0,
+      "unique_traders": 1
+     },
+     "h1": {
+      "buys": 1,
+      "sells": 0,
+      "buyers": 1,
+      "sellers": 0,
+      "unique_traders": 1
+     },
+     "h6": {
+      "buys": 1,
+      "sells": 0,
+      "buyers": 1,
+      "sellers": 0,
+      "unique_traders": 1
+     },
+     "h24": {
+      "buys": 1,
+      "sells": 0,
+      "buyers": 1,
+      "sellers": 0,
+      "unique_traders": 1
+     }
+    },
+    "volume_usd": {
+     "m5": "0.001043487129",
+     "m15": "0.001043487129",
+     "m30": "0.001043487129",
+     "h1": "0.001043487129",
+     "h6": "0.001043487129",
+     "h24": "0.001043487129"
+    },
+    "reserve_in_usd": "2580.3169"
+   },
+   "relationships": {
+    "base_token": {
+     "data": {
+      "id": "bsc_0x86490c3ba276594333de2eebfdb467e57cc3ffff",
+      "type": "token"
+     }
+    },
+    "quote_token": {
+     "data": {
+      "id": "bsc_0x0000000000000000000000000000000000000000",
+      "type": "token"
+     }
+    },
+    "dex": {
+     "data": {
+      "id": "four-meme",
+      "type": "dex"
+     }
+    }
+   }
+  },
+  {
+   "id": "bsc_0x136433eea8e7657960b70256181caeb3e7caffff",
+   "type": "pool",
+   "attributes": {
+    "base_token_price_usd": "0.00000583472919915603",
+    "base_token_price_native_currency": "0.00000000850027045018617",
+    "quote_token_price_usd": "138.19595220955",
+    "quote_token_price_native_currency": "0.23328955989305269267700425914",
+    "base_token_price_quote_token": "0.00000003643656602",
+    "quote_token_price_base_token": "27444957.3410859",
+    "address": "0x136433eea8e7657960b70256181caeb3e7caffff",
+    "name": "ちいかわ / EWYB",
+    "pool_created_at": "2026-11-18T13:15:47Z",
+    "fdv_usd": "5479.602139",
+    "market_cap_usd": null,
+    "price_change_percentage": {
+     "m5": "59.701",
+     "m15": "59.701",
+     "m30": "59.701",
+     "h1": "59.701",
+     "h6": "59.701",
+     "h24": "59.701"
+    },
+    "transactions": {
+     "m5": {
+      "buys": 22,
+      "sells": 12,
+      "buyers": 20,
+      "sellers": 10,
+      "unique_traders": 20
+     },
+     "m15": {
+      "buys": 22,
+      "sells": 12,
+      "buyers": 20,
+      "sellers": 10,
+      "unique_traders": 20
+     },
+     "m30": {
+      "buys": 22,
+      "sells": 12,
+      "buyers": 20,
+      "sellers": 10,
+      "unique_traders": 20
+     },
+     "h1": {
+      "buys": 22,
+      "sells": 12,
+      "buyers": 20,
+      "sellers": 10,
+      "unique_traders": 20
+     },
+     "h6": {
+      "buys": 22,
+      "sells": 12,
+      "buyers": 20,
+      "sellers": 10,
+      "unique_traders": 20
+     },
+     "h24": {
+      "buys": 22,
+      "sells": 12,
+      "buyers": 20,
+      "sellers": 10,
+      "unique_traders": 20
+     }
+    },
+    "volume_usd": {
+     "m5": "4683.7285829534",
+     "m15": "4683.7285829534",
+     "m30": "4683.7285829534",
+     "h1": "4683.7285829534",
+     "h6": "4683.7285829534",
+     "h24": "4683.7285829534"
+    },
+    "reserve_in_usd": "3556.22"
+   },
+   "relationships": {
+    "base_token": {
+     "data": {
+      "id": "bsc_0x136433eea8e7657960b70256181caeb3e7caffff",
+      "type": "token"
+     }
+    },
+    "quote_token": {
+     "data": {
+      "id": "bsc_0xbe82f76637dba2c114c41df856c2c51e522e2cb8",
+      "type": "token"
+     }
+    },
+    "dex": {
+     "data": {
+      "id": "four-meme",
+      "type": "dex"
+     }
+    }
+   }
+  }
+ ]
+}

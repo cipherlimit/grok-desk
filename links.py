@@ -6,7 +6,11 @@ CHAIN_ID = {"solana": 1399811149, "robinhood": 4663, "base": 8453, "bnb": 56}
 SIGNUP_URL = "https://fomo.family/r/savipww"
 
 
-def coin_url(address, chain="solana"):
+def coin_url(address, chain=None):
+    """chain None = from the address (0x... = bnb, else solana; chains.chain_of)."""
+    if chain is None:
+        import chains
+        chain = chains.chain_of(address)
     if chain not in CHAIN_ID:
         log.warning("coin_url: unknown chain %r for %s, returning SIGNUP_URL", chain, address)
         return SIGNUP_URL

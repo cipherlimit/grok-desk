@@ -3,7 +3,7 @@ computes them in code (rules mode), and code applies the GATE. (PART 5, Agent 3)
 analyst_mode = "rules" now (no TYPESAFE_API_KEY). The Jev path is wired but inactive."""
 import asyncio, hashlib, json, re, time
 import httpx
-import db, fields, onchain
+import db, fields, onchain, chains
 from config import secret
 from sources import SourceError, with_retry
 from agents.base import agent_logger, wait_unpaused
@@ -45,6 +45,7 @@ def gate(a: dict, s: dict) -> tuple[int, bool, list[str]]:
     return score, not failed, failed
 
 def bundled_from(auditor: dict) -> int:
+    if auditor.get("chain") == chains.BNB: return 0        # no bundle graph on BNB Chain (no free source)
     v = next((l["value"] for l in auditor.get("layers", []) if l["n"] == 7), "None")
     m = re.match(r"(\d+)", v or "")
     return int(m.group(1)) if m else 0
@@ -54,6 +55,7 @@ def _num(x, nd=2):
     return f"{x:,.{nd}f}".rstrip("0").rstrip(".") if isinstance(x, float) else f"{x:,}"
 
 def build_state(scan: dict, auditor: dict, d: dict, dev_pct, age_min: int, max_chars: int) -> str:
+    if auditor.get("chain") == chains.BNB: return build_state_bnb(scan, auditor, d, dev_pct, age_min, max_chars)
     lv = {l["n"]: l["value"] for l in auditor.get("layers", [])}
     lp = lv.get(5, "null"); bund = lv.get(7, "null"); dele = lv.get(8, "null")
     top10 = re.match(r"([\d.]+)", lv.get(4, "") or "")
@@ -63,6 +65,17 @@ def build_state(scan: dict, auditor: dict, d: dict, dev_pct, age_min: int, max_c
           f" Last 1h: {_num(d.get('buys_h1'))} buys, {_num(d.get('sells_h1'))} sells, volume ${_num(d.get('vol_h1'), 0)}, price {_num(d.get('chg_h1'))}%.\n"
           f" Top 10 hold {top10.group(1) if top10 else 'null'}%. Dev holds {_num(dev_pct, 1) if dev_pct is not None else 'null'}%, sold 0. "
           f"LP {lp}. Bundled {bund}. Delegations {dele}.")
+    return st[:int(max_chars)]
+
+def build_state_bnb(scan: dict, auditor: dict, d: dict, dev_pct, age_min: int, max_chars: int) -> str:
+    lv = {l["name"]: l["value"] for l in auditor.get("layers", [])}
+    top10 = re.match(r"([\d.]+)", lv.get("Top 10 holders", "") or "")
+    st = (f"Coin {d.get('name') or scan.get('name')} on BNB Chain, PancakeSwap pool opened {age_min} min ago. "
+          f"Liquidity ${_num(d.get('liquidity_usd'), 0)}. Market cap ${_num(d.get('mcap'), 0)}.\n"
+          f" Last 5 min: {_num(d.get('buys_m5'))} buys, {_num(d.get('sells_m5'))} sells, volume ${_num(d.get('vol_m5'), 0)}, price {_num(d.get('chg_m5'))}%.\n"
+          f" Last 1h: {_num(d.get('buys_h1'))} buys, {_num(d.get('sells_h1'))} sells, volume ${_num(d.get('vol_h1'), 0)}, price {_num(d.get('chg_h1'))}%.\n"
+          f" Top 10 hold {top10.group(1) if top10 else 'null'}%. Dev holds {_num(dev_pct, 1) if dev_pct is not None else 'null'}%. "
+          f"Taxes {lv.get('Taxes', 'null')}. LP {lv.get('Liquidity', 'null')}. Owner {lv.get('Owner powers', 'null')}.")
     return st[:int(max_chars)]
 
 async def ask_jev(state: str, s: dict, client: httpx.AsyncClient) -> tuple[dict | None, str, dict | None, str]:

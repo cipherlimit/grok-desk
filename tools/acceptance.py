@@ -23,7 +23,7 @@ def send_1b():
     c = db.connect()
     reply, buttons = telegram.Desk(c, None, None).cmd_test()
     url = buttons[0][0]["url"]
-    assert url == links.coin_url(c.execute("SELECT mint FROM coins ORDER BY migrated_at DESC LIMIT 1").fetchone()[0], "solana") or url == links.SIGNUP_URL
+    assert url == links.coin_url(c.execute("SELECT mint FROM coins ORDER BY migrated_at DESC LIMIT 1").fetchone()[0]) or url == links.SIGNUP_URL
     ok = asyncio.run(telegram.send(reply, buttons, retries=0))       # exactly 1 message, no retries
     line = f"sent={ok} text={reply.splitlines()[0]!r} button={buttons[0][0]['text']!r} url_has_ref={'r=savipww' in url} url={url}"
     (OUT / "test1b_notify.txt").write_text(line + "\n\nfull text:\n" + reply + "\n")

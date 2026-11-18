@@ -2,12 +2,12 @@ import sys, pathlib, sqlite3; sys.path.insert(0, str(pathlib.Path(__file__).reso
 import pytest, db
 
 SPEC = {  # STEP 4, written out independently of db.SPEC
-    "coins": "mint name symbol pool migrated_at creator creator_balance_at_migration holders",
-    "scans": "id mint ts liquidity_usd top10_pct h1_change_pct age_min verdict reason",
-    "audits": "id mint ts layer name value_text pass source",
+    "coins": "mint name symbol pool migrated_at creator creator_balance_at_migration holders chain",
+    "scans": "id mint ts liquidity_usd top10_pct h1_change_pct age_min verdict reason chain",
+    "audits": "id mint ts layer name value_text pass source chain",
     "verdicts": "id mint ts alive_6h organic flush chase score pass reason input_tokens",
-    "signals": "id mint ts price size_usd stack_pct link mode status",
-    "positions": "id mint opened_at entry_price size_usd peak_price stop_price trail_active closed_at exit_price exit_reason pnl_usd fees_usd mode",
+    "signals": "id mint ts price size_usd stack_pct link mode status chain",
+    "positions": "id mint opened_at entry_price size_usd peak_price stop_price trail_active closed_at exit_price exit_reason pnl_usd fees_usd mode chain",
     "activity": "id ts kind mint agent title subtitle value",
     "prices": "mint ts price volume_m5",
     "balance": "ts value",

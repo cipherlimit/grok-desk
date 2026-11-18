@@ -1,7 +1,7 @@
 """Agent 2 · Auditor. 8 layers in order, stop at the first red. (PART 4, Agent 2)
 Every source: retry [3] tries [2]s apart; still nothing = red "no data: {layer}". No data is never a pass."""
 import asyncio, time
-import db, fields, onchain, telegram
+import db, fields, onchain, telegram, chains, bnb, bsc
 from sources import SourceError, with_retry
 from agents.base import agent_logger, wait_unpaused
 
@@ -13,6 +13,11 @@ NODATA = {1: "mint authority", 2: "freeze authority", 3: "dev", 4: "top 10", 5: 
           6: "pool age", 7: "bundles", 8: "delegations"}
 
 class NoData(Exception): pass
+
+def layers_for(chain_or_mint: str) -> dict:
+    """Layer names: the Solana 8 (above) or the BNB Chain 8 (bnb.LAYERS)."""
+    ch = chain_or_mint if chain_or_mint in chains.LABEL else chains.chain_of(chain_or_mint)
+    return bnb.LAYERS if ch == chains.BNB else LAYERS
 
 # ---------- pure layer logic (tested on raw samples) ----------
 def l1_mint(acc) -> tuple[bool, str]:
@@ -112,6 +117,8 @@ class Auditor:
             await self.bus.put("analyst", {"scanner": scan, "auditor": out, "dev_pct": None})
             return out
         tries, gap = int(s["auditor.retries"]), s["auditor.retry_gap_s"]
+        if chains.chain_of(mint) == chains.BNB:
+            return await self.audit_bnb(scan, coin, s, adhoc, tries, gap)
         cache = {}
         async def get(key, fn):              # each source fetched once per audit, with retries
             if key not in cache:
@@ -191,6 +198,54 @@ class Auditor:
             db.activity(self.c, "rejected", NAME, f"Rejected {name}", f"Auditor · {reason}", "Skipped", mint)
         return out
 
+    async def audit_bnb(self, scan: dict, coin, s: dict, adhoc: bool, tries: int, gap: float) -> dict:
+        """BNB Chain: the 8 bnb.LAYERS in order, stop at the first red. Each source with [3] retries [2]s apart;
+        a source that never answers leaves its layers red "no data: ..." (honeypot.is 404 = GoPlus decides alone)."""
+        mint, pool = scan["mint"], chains.norm(scan.get("pool") or (coin["pool"] if coin else None))
+        async def fetch(name, fn):
+            try: return await with_retry(fn, tries, gap)
+            except SourceError as e:
+                log.warning("source %s failed after %d tries mint=%s (%s)", name, tries, mint, e); return None
+        t0 = time.monotonic()
+        pairs = await fetch("dex", lambda: self.src.dex_tokens([mint])) or []
+        pair = onchain.best_pair(pairs, mint)
+        liq_now = fields.dig(pair, "liquidity.usd") if pair else None
+        pools = {chains.norm(p.get("pairAddress")) for p in pairs if chains.same(fields.dig(p, "baseToken.address"), mint)}
+        g = None
+        for i in range(tries):                       # GoPlus, honeypot.is and the BSC RPC: [3] tries [2]s apart
+            got = await bnb.gather(self.src, bsc.ledgers_for(self.src), mint, pool, bsc.is_v2(pair), pools, log)
+            if g is None: g = got
+            else: g = {k: (g[k] if g[k] is not None else got[k]) for k in g}
+            if all(v is not None for k, v in g.items() if k != "hp"): break
+            if i < tries - 1: await asyncio.sleep(gap)
+        gp, hp = g["gp"], g["hp"]
+        created = db.parse_iso(coin["migrated_at"]) if coin and coin["migrated_at"] else None
+        layers, reason = bnb.run_layers(gp, hp, top10=g["top10"], dev_pct=g["dev_pct"], lp=g["lp"], created_ts=created,
+                                        liq_now=liq_now, liq_scan=scan.get("liquidityUsd"), s=s)
+        dev_pct = g["dev_pct"]
+        ms = int((time.monotonic() - t0) * 1000)
+        led = bsc.ledgers_for(self.src).st.get(mint) or {}
+        holders = sum(1 for a, v in (led.get("bal") or {}).items() if v > 0 and a not in pools and a not in bsc.NOT_HOLDERS) \
+            if led.get("complete") else None                     # live count from the Transfer-log replay (GoPlus lags)
+        if holders is not None: self.c.execute("UPDATE coins SET holders=? WHERE mint=?", (holders, mint))
+        if gp and gp.get("creator_address") and coin and not coin["creator"]:
+            self.c.execute("UPDATE coins SET creator=? WHERE mint=?", (chains.norm(gp["creator_address"]), mint))
+        for l in layers:
+            self.c.execute("INSERT INTO audits(mint,ts,layer,name,value_text,pass,source,chain) VALUES(?,?,?,?,?,?,?,?)",
+                           (mint, db.now_iso(), l["n"], l["name"], l["value"], int(l["pass"]), l["source"], chains.BNB))
+            log.info("mint=%s chain=bnb layer=%d %s value=%r ms=%d %s", mint, l["n"], l["name"], l["value"], ms, "ok" if l["pass"] else "RED")
+        passed = reason is None
+        out = {"agent": "auditor", "mint": mint, "chain": chains.BNB, "ts": db.now_iso(), "passed": passed,
+               "layersChecked": len(layers), "layers": layers, "holders": holders, "reason": reason}
+        log.info("verdict mint=%s chain=bnb passed=%s layers=%d reason=%s%s", mint, passed, len(layers), reason, " (adhoc)" if adhoc else "")
+        if adhoc: return out
+        if passed:
+            await self.bus.put("analyst", {"scanner": scan, "auditor": out, "dev_pct": dev_pct})
+        else:
+            name = (coin["name"] if coin else None) or scan.get("name") or mint[:6]
+            db.activity(self.c, "rejected", NAME, f"Rejected {name}", f"Auditor · {reason}", "Skipped", mint)
+        return out
+
     async def layer8_down(self):
         night = db.night_bounds()[0]
         if self.layer8_alerted_night == night: return
@@ -205,14 +260,17 @@ async def adhoc_scan(conn, src, mint: str) -> dict | None:
     pair = onchain.best_pumpswap_pair(pairs, mint)
     if not pair: return None
     d = fields.dex_read(pair)
+    chain = chains.chain_of(mint)
+    if chain == chains.BNB: d["pool"] = chains.norm(d["pool"])
     if not conn.execute("SELECT 1 FROM coins WHERE mint=?", (mint,)).fetchone():
         creator = None
-        try: creator = fields.dig(await with_retry(lambda: src.rug_report(mint), 3, 2), fields.RUG["creator"])
-        except SourceError: pass
+        if chain == chains.SOLANA:
+            try: creator = fields.dig(await with_retry(lambda: src.rug_report(mint), 3, 2), fields.RUG["creator"])
+            except SourceError: pass
         migrated = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime((d["pair_created_ms"] or 0) / 1000)) if d["pair_created_ms"] else None
         # creator balance at migration is unknown for a coin the desk never saw: layer 3 stays red "no data: dev"
-        conn.execute("INSERT INTO coins(mint,name,symbol,pool,migrated_at,creator) VALUES(?,?,?,?,?,?)",
-                     (mint, d["name"], d["symbol"], d["pool"], migrated, creator))
+        conn.execute("INSERT INTO coins(mint,name,symbol,pool,migrated_at,creator,chain) VALUES(?,?,?,?,?,?,?)",
+                     (mint, d["name"], d["symbol"], d["pool"], migrated, creator, chain))
     return {"agent": "scanner", "mint": mint, "name": d["name"], "symbol": d["symbol"], "pool": d["pool"],
             "liquidityUsd": d["liquidity_usd"], "top10Pct": None, "h1ChangePct": d["chg_h1"], "ageMin": None,
             "verdict": "adhoc", "reason": None, "ts": db.now_iso()}

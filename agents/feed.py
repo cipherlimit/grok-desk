@@ -5,7 +5,7 @@ task deaths) and heartbeat up/down changes. Events go to a persisted outbox firs
 or a Telegram outage never drops one; sends are batched (~1 msg/s, split under 4096 chars).
 Informational only: it never places an order and never says buy. Secrets are never in a message."""
 import asyncio, collections, json, os, time
-import db, links
+import db, links, chains
 from config import ROOT
 from agents.base import agent_logger
 
@@ -95,7 +95,8 @@ class Feed:
         cur = self.st["cur"]; ev = []          # (text, url, alone)
         for r in self.c.execute("SELECT rowid AS rid, * FROM coins WHERE rowid>? ORDER BY rowid", (cur["coins"],)):
             cur["coins"] = r["rid"]
-            ev.append((f"🆕 New coin graduated · {r['name'] or r['symbol'] or 'unnamed'} · {r['mint']}", None, False))
+            bnb = " · BNB Chain (PancakeSwap)" if r["chain"] == chains.BNB else ""
+            ev.append((f"🆕 New coin graduated · {r['name'] or r['symbol'] or 'unnamed'} · {r['mint']}{bnb}", None, False))
         thr = good_liq_usd(s)
         for r in self.c.execute("SELECT * FROM scans WHERE id>? ORDER BY id", (cur["scans"],)):
             cur["scans"] = r["id"]
@@ -108,12 +109,12 @@ class Feed:
             liq = r["liquidity_usd"]
             if liq is not None and liq >= thr and r["mint"] not in self.st["alerted"]:
                 self.st["alerted"] = (self.st["alerted"] + [r["mint"]])[-500:]
-                url = links.coin_url(r["mint"], "solana")
-                ev.append((f"🟢 GOOD LIQUIDITY · {nm}\n"
+                url = links.coin_url(r["mint"])
+                ev.append((f"🟢 GOOD LIQUIDITY · {nm}{' · BNB Chain' if chains.is_evm(r['mint']) else ''}\n"
                            f"liq {k(liq)} (threshold {k(thr)}) · top10 {pct(r['top10_pct'])} · 1h {pct(r['h1_change_pct'], True)} · age {age}\n"
                            f"Scanner: {r['verdict']}" + (f" ({r['reason']})" if r["reason"] else "") + "\n"
                            f"Info only, not a signal: a trade still needs every agent to pass and your OK.\n"
-                           f"FOMO: {url}\nDexScreener: https://dexscreener.com/solana/{r['mint']}\n{r['mint']}", url, True))
+                           f"FOMO: {url}\nDexScreener: {chains.dexscreener_url(r['mint'])}\n{r['mint']}", url, True))
         for r in self.c.execute("SELECT * FROM audits WHERE id>? ORDER BY id", (cur["audits"],)):
             cur["audits"] = r["id"]
             ev.append((f"🛡 Auditor L{r['layer']} {r['name']} {'pass' if r['pass'] else 'FAIL'} · {self.name(r['mint'])} · "

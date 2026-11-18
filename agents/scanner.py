@@ -3,7 +3,7 @@ One PumpPortal websocket (subscribeMigration only), waiting room in db.coins, De
 batch every [60]s -> db.prices, kill order liq -> top 10 -> h1 -> copycat, pass at pool age >= [10] min."""
 import asyncio, json, re, time, unicodedata
 import websockets
-import db, fields, onchain
+import db, fields, onchain, chains, bnb, bsc
 from sources import PUMPPORTAL_WS, DEX_BATCH, RateLimited, SourceError, with_retry
 from agents.base import agent_logger, paused
 from agents import feed
@@ -86,6 +86,8 @@ class Scanner:
         mint = fields.dig(msg, fields.PUMPPORTAL["mint"])
         if paused(self.c, NAME):
             log.info("paused: migration ignored mint=%s", mint); return
+        if chains.SOLANA not in chains.enabled(self.s):
+            log.info("solana off (chains.enabled): migration ignored mint=%s", mint); return
         if self.c.execute("SELECT 1 FROM coins WHERE mint=?", (mint,)).fetchone():
             log.info("duplicate migration ignored mint=%s", mint); return
         self.received += 1
@@ -134,7 +136,7 @@ class Scanner:
         for p in pairs:   # today's runners: every coin seen today with priceChange.h24 >= [+300%]
             h24 = fields.dig(p, "priceChange.h24")
             if h24 is not None and h24 >= s["scanner.runner_h24_pct"]:
-                self.runners[fields.dig(p, "baseToken.address")] = (fields.dig(p, "baseToken.name"), fields.dig(p, "baseToken.symbol"))
+                self.runners[chains.norm(fields.dig(p, "baseToken.address"))] = (fields.dig(p, "baseToken.name"), fields.dig(p, "baseToken.symbol"))
         now = time.time()
         for row in room:
             await self.judge(row, pairs, s, now)
@@ -149,6 +151,8 @@ class Scanner:
                 return self.emit(row, None, None, None, None, "kill", "never qualified")
             return                                   # DexScreener doesn't know it yet: it waits
         d = fields.dex_read(pair)
+        chain = chains.chain_of(mint)
+        if chain == chains.BNB: d["pool"] = chains.norm(d["pool"])
         self.c.execute("UPDATE coins SET name=?, symbol=?, pool=? WHERE mint=?", (d["name"], d["symbol"], d["pool"], mint))
         liq = d["liquidity_usd"]
         if liq is None:
@@ -158,12 +162,18 @@ class Scanner:
         age_min = int((now * 1000 - (d["pair_created_ms"] or now * 1000)) / 60000)
         top10 = None
         verdict, reason, need = decide(s, liq, None, d["chg_h1"], None, age_min)
-        if need:
+        if need and chain == chains.BNB:
+            pools = {chains.norm(p.get("pairAddress")) for p in pairs if chains.same(fields.dig(p, "baseToken.address"), mint)}
+            try: top10 = await bsc.ledgers_for(self.src).top10_pct(mint, pools)   # Transfer-log replay, pools/burn dropped
+            except (SourceError, bsc.NoData) as e:
+                log.warning("top10 read failed mint=%s (%s), waiting", mint, type(e).__name__ if isinstance(e, bsc.NoData) else e)
+        elif need:
             try:
                 if mint not in self.supply: self.supply[mint] = await onchain.supply_raw(self.src, mint)
                 if self.supply[mint] > 0: top10 = await onchain.top10_pct(self.src, mint, d["pool"], self.supply[mint])
             except SourceError as e:
                 log.warning("top10 read failed mint=%s (%s), waiting", mint, e)
+        if need:
             cc = copycat_of(d["name"], d["symbol"], mint, self.runners)
             verdict, reason, _ = decide(s, liq, top10, d["chg_h1"], cc, age_min)
         if verdict is None and in_room_min >= s["scanner.max_wait_min"]:
@@ -180,13 +190,51 @@ class Scanner:
                "pool": (d or {}).get("pool"), "liquidityUsd": liq, "top10Pct": top10,
                "h1ChangePct": (d or {}).get("chg_h1"), "ageMin": age_min,
                "verdict": verdict, "reason": reason, "ts": db.now_iso()}
-        self.c.execute("INSERT INTO scans(mint,ts,liquidity_usd,top10_pct,h1_change_pct,age_min,verdict,reason) "
-                       "VALUES(?,?,?,?,?,?,?,?)", (mint, out["ts"], liq, top10, out["h1ChangePct"], age_min, verdict, reason))
+        chain = chains.chain_of(mint)
+        if chain != chains.SOLANA: out["chain"] = chain        # Solana messages stay exactly as before
+        self.c.execute("INSERT INTO scans(mint,ts,liquidity_usd,top10_pct,h1_change_pct,age_min,verdict,reason,chain) "
+                       "VALUES(?,?,?,?,?,?,?,?,?)", (mint, out["ts"], liq, top10, out["h1ChangePct"], age_min, verdict, reason, chain))
         log.info("decision ts=%s mint=%s verdict=%s reason=%s liq=%s top10=%s h1=%s age=%s",
                  out["ts"], mint, verdict, reason, liq, top10, out["h1ChangePct"], age_min)
         if verdict == "pass":
             self.bus.put_nowait("auditor", out)
         return out
+
+    # ---------- BNB Chain discovery (chains.enabled has bnb) ----------
+    async def bnb_discover(self) -> int:
+        """GeckoTerminal newest BSC pools (pages 1-2) -> new PancakeSwap coins into the waiting room (db.coins,
+        chain bnb, migrated_at = pool creation). The 60s cycle then judges them exactly like Solana coins."""
+        s = self.s
+        if paused(self.c, NAME) or chains.BNB not in chains.enabled(s): return 0
+        found = []
+        for page in (1, 2):
+            body = await self.src.gt_new_pools(page)
+            found += bnb.parse_new_pools(body)
+        added, now = 0, time.time()
+        for p in found:
+            if not p["created_at"]: continue
+            try: created = db.parse_iso(p["created_at"])
+            except ValueError: continue
+            if now - created > s["scanner.max_wait_min"] * 60: continue      # too old to ever be judged
+            if self.c.execute("SELECT 1 FROM coins WHERE mint=?", (p["mint"],)).fetchone(): continue
+            self.c.execute("INSERT INTO coins(mint,symbol,pool,migrated_at,chain) VALUES(?,?,?,?,?)",
+                           (p["mint"], p["symbol"], p["pool"], p["created_at"], chains.BNB))
+            self.received += 1; added += 1
+            log.info("bnb new pool mint=%s pool=%s dex=%s reserve=%s created=%s", p["mint"], p["pool"], p["dex"],
+                     round(p["reserve_usd"]), p["created_at"])
+        return added
+
+    async def bnb_loop(self):
+        while True:
+            wait = self.s["scanner.bnb_poll_s"]
+            try: await self.bnb_discover()
+            except RateLimited:
+                log.warning("geckoterminal 429, waiting %ss", self.s["scanner.dex_429_wait_s"]); wait += self.s["scanner.dex_429_wait_s"]
+            except SourceError as e:
+                log.warning("bnb discovery error %s", e)
+            except Exception as e:
+                log.exception("bnb discovery error: %s", e)
+            await asyncio.sleep(wait)
 
     async def cycle_loop(self):
         while True:
@@ -202,7 +250,7 @@ async def run(conn, bus, src):
     sc = Scanner(conn, bus, src)
     db.heartbeat(conn, NAME)
     log.info("start")
-    await asyncio.gather(sc.ws_loop(), sc.cycle_loop(), _hb(conn))
+    await asyncio.gather(sc.ws_loop(), sc.cycle_loop(), sc.bnb_loop(), _hb(conn))
 
 async def _hb(conn):
     while True:

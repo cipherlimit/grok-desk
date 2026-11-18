@@ -13,7 +13,7 @@ POST endpoints and SSE do not exist in plan B: settings, pause and mode go throu
 The files carry no keys and no token. The FastAPI app below is the plan A shape, not served."""
 import asyncio, json, logging, logging.handlers, os, shutil, time
 from fastapi import FastAPI, Header, HTTPException
-import db, links
+import db, links, chains, bnb
 from config import OUT_DIR, LOG_DIR, SPEC, secret
 from sources import DEX_BATCH, SourceError
 
@@ -63,7 +63,7 @@ def current_balance(c, s):
 def card_scanner(c, s, start):
     feed = []
     for r in _rows(c, "SELECT s.ts,s.mint,s.verdict,s.reason,s.liquidity_usd FROM scans s WHERE s.ts>=? ORDER BY s.id DESC LIMIT 6", (start,)):
-        feed.append({**r, "name": coin_name(c, r["mint"]), "coin_url": links.coin_url(r["mint"], "solana")})
+        feed.append({**r, "name": coin_name(c, r["mint"]), "coin_url": links.coin_url(r["mint"])})
     room = db.waiting_room(c, s["scanner.max_wait_min"])
     return {"pools": _one(c, "SELECT COUNT(*) FROM coins WHERE migrated_at>=?", (start,)) or 0,
             "waiting": len(room), "passed": _one(c, "SELECT COUNT(*) FROM scans WHERE verdict='pass' AND ts>=?", (start,)) or 0,
@@ -76,12 +76,13 @@ def audit_doc(c, mint, s=None):
     last1 = max(i for i, r in enumerate(rows) if r["layer"] == 1) if any(r["layer"] == 1 for r in rows) else 0
     rows = rows[last1:]
     layers, red = [], None
+    names = LAYER_NAMES if not chains.is_evm(mint) else bnb.LAYERS
     got = {r["layer"]: r for r in rows}
     for n in range(1, 9):
         r = got.get(n)
-        if r: layers.append({"n": n, "name": LAYER_NAMES[n], "pass": bool(r["pass"]), "value": r["value_text"],
+        if r: layers.append({"n": n, "name": names[n], "pass": bool(r["pass"]), "value": r["value_text"],
                              "source": r["source"], "ts": r["ts"], "status": "pass" if r["pass"] else "red"})
-        else: layers.append({"n": n, "name": LAYER_NAMES[n], "pass": None, "value": "not checked", "source": None,
+        else: layers.append({"n": n, "name": names[n], "pass": None, "value": "not checked", "source": None,
                              "ts": None, "status": "not checked" if (red or len(got) == 0) else "pending"})
         if r and not r["pass"] and not red: red = r["value_text"]
     for l in layers:                      # after the first red, the rest are grey "not checked"
@@ -97,7 +98,7 @@ def audit_doc(c, mint, s=None):
     else: verdict = {"state": "running", "title": "taking apart...", "subtitle": ""}
     return {"mint": mint, "name": name, "symbol": _one(c, "SELECT symbol FROM coins WHERE mint=?", (mint,)),
             "layers": layers, "layersChecked": checked, "complete": complete, "passed": complete and not red,
-            "reason": red, "verdict": verdict, "ts": rows[-1]["ts"], "coin_url": links.coin_url(mint, "solana"),
+            "reason": red, "verdict": verdict, "ts": rows[-1]["ts"], "coin_url": links.coin_url(mint),
             "auditor_enabled": bool((s or {}).get("auditor.enabled", True))}
 
 def card_auditor(c, s, start):
@@ -115,7 +116,7 @@ def card_analyst(c, s, start):
     if r:
         last = {"mint": r["mint"], "name": coin_name(c, r["mint"]), "score": r["score"], "pass": bool(r["pass"]),
                 "reason": r["reason"], "answers": {k: r[k] for k in ("alive_6h", "organic", "flush", "chase")},
-                "coin_url": links.coin_url(r["mint"], "solana")}
+                "coin_url": links.coin_url(r["mint"])}
     return {"scored": _one(c, "SELECT COUNT(*) FROM verdicts WHERE ts>=?", (start,)) or 0, "last": last,
             "green_from": s["analyst.min_score"], "mode": s["analyst.mode"]}
 
@@ -149,7 +150,7 @@ def state_doc(c, s):
     openp = []
     for p in db.open_positions(c):
         openp.append({"id": p["id"], "mint": p["mint"], "name": coin_name(c, p["mint"]), "size_usd": p["size_usd"],
-                      "entry_price": p["entry_price"], "stop_pct": pos_stop_pct(p), "coin_url": links.coin_url(p["mint"], "solana")})
+                      "entry_price": p["entry_price"], "stop_pct": pos_stop_pct(p), "coin_url": links.coin_url(p["mint"])})
     unread = _one(c, "SELECT COUNT(*) FROM activity WHERE ts>=?", (time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 3600)),)) or 0
     return {"ts": db.now_iso(), "mode": s["desk.mode"], "balance": round(bal, 2),
             "today_pct": round(100 * (bal - ns) / ns, 2) if ns else 0.0, "multiplier": round(bal / ns, 2) if ns else 1.0,
@@ -171,7 +172,7 @@ def chart_doc(c, s):
             pts = [pts[int(i * step)] for i in range(240)] + [pts[-1]]
         out["ranges"][name] = pts
     for p in _rows(c, "SELECT * FROM positions ORDER BY id"):
-        name, url = coin_name(c, p["mint"]), links.coin_url(p["mint"], "solana")
+        name, url = coin_name(c, p["mint"]), links.coin_url(p["mint"])
         out["marks"].append({"ts": p["opened_at"], "kind": "bought", "color": "#0a84ff", "text": f"Bought {name}", "mint": p["mint"], "coin_url": url})
         if p["closed_at"]:
             pnl = p["pnl_usd"] or 0
@@ -184,7 +185,7 @@ def chart_doc(c, s):
 
 def _activity_row(c, r):
     trade = r["kind"] in ("bought", "sold", "stopped")
-    return {**r, "target": ("coin" if trade else "audit"), "coin_url": links.coin_url(r["mint"], "solana") if r["mint"] else None}
+    return {**r, "target": ("coin" if trade else "audit"), "coin_url": links.coin_url(r["mint"]) if r["mint"] else None}
 
 def activity_pages(c, max_pages=10):
     rows = [_activity_row(c, r) for r in _rows(c, "SELECT id,ts,kind,mint,agent,title,subtitle,value FROM activity ORDER BY id DESC LIMIT ?", (PAGE * max_pages,))]
@@ -226,12 +227,12 @@ def coin_doc(c, s, mint):
         exit_lines = {"stop_line": p["stop_price"], "trail_line": trail_line, "trail_active": bool(p["trail_active"]),
                       "current_exit_line": current, "timeout_left_min": max(0, int(left_h * 60))}
     return {"ts": db.now_iso(), "mint": mint, "name": coin_name(c, mint), "symbol": (coin["symbol"] if coin else None) or lp.get("symbol"),
-            "chain": "Solana", "age_min": age_min, "price": last["price"] if last else None, "price_ts": last["ts"] if last else None,
+            "chain": chains.LABEL[chains.chain_of(mint)], "age_min": age_min, "price": last["price"] if last else None, "price_ts": last["ts"] if last else None,
             "candles": candles(c, mint, since), "market_cap": lp.get("market_cap"), "liquidity_usd": lp.get("liquidity_usd"),
             "volume_h24": lp.get("volume_h24"), "holders": coin["holders"] if coin else None,
             "shield": (f"{aud['layersChecked']}/8" if aud and aud["passed"] else (f"{sum(1 for l in aud['layers'] if l['status']=='pass')}/8" if aud else None)),
             "position": position, "exit_lines": exit_lines, "mode": s["desk.mode"],
-            "trail_start_pct": s["risk.trail_start_pct"], "coin_url": links.coin_url(mint, "solana"), "button": "Sell on FOMO" if p else "Buy on FOMO"}
+            "trail_start_pct": s["risk.trail_start_pct"], "coin_url": links.coin_url(mint), "button": "Sell on FOMO" if p else "Buy on FOMO"}
 
 def decisions(c, name, n=20):
     q = {"scanner": "SELECT ts,mint,verdict,reason FROM scans ORDER BY id DESC LIMIT ?",
@@ -246,7 +247,7 @@ def decisions(c, name, n=20):
                          "reason": d["reason"] or f"{d['layersChecked']}/8"})
     else:
         rows = _rows(c, q[name], (n,))
-    return [{**r, "name": coin_name(c, r["mint"]), "coin_url": links.coin_url(r["mint"], "solana")} for r in rows]
+    return [{**r, "name": coin_name(c, r["mint"]), "coin_url": links.coin_url(r["mint"])} for r in rows]
 
 def account_doc(c, s):
     import telegram
