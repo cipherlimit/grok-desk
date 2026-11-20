@@ -36,7 +36,8 @@ async def main(pages=3, max_coins=8):
             g = await bnb.gather(src, bsc.ledgers_for(src), mint, pool, bsc.is_v2(pair), pools)
             gp, hp, top10 = g["gp"], g["hp"], g["top10"]
             s2 = dict(s); s2["scanner.judge_from_age_min"] = 0                # show the rule outcome even before 10 min
-            v, why, _ = decide(s2, liq or 0, top10, d.get("chg_h1"), None, age, chains.BNB) if liq is not None else ("wait", "no DexScreener pair yet", 0)
+            vol = 0 if d.get("vol_h24") is None and d.get("vol_h1") is None else (d.get("vol_h24") if d.get("vol_h24") is not None else d.get("vol_h1"))
+            v, why, _ = decide(s2, liq or 0, top10, d.get("chg_h1"), None, age, chains.BNB, vol) if liq is not None else ("wait", "no DexScreener pair yet", 0)
             v = v or ("wait (top 10 unknown)" if top10 is None else "wait (pool < 10 min)")
             layers, reason = bnb.run_layers(gp, hp, top10=top10, dev_pct=g["dev_pct"], lp=g["lp"],
                                             created_ts=db.parse_iso(c["created_at"]), liq_now=liq, liq_scan=liq, s=s, now=now)

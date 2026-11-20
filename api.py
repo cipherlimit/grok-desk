@@ -162,8 +162,11 @@ def best_candidate(c, s, start):
     > scanner pass). If nothing passed the Scanner: the highest-liquidity coin seen, labelled 'closest call'.
     Information only, never a buy call."""
     best = None
+    clean = bool(s.get("feed.only_clean", True)) if s.get("feed.only_clean") is not False else False
+    # feed.only_clean default True: the "best candidate" card only shows a fully cleared coin (analyst pass or a signal).
     def consider(rank, mint, ts, stage, detail):
         nonlocal best
+        if clean and rank < 4: return
         if best is None or (rank, ts) > (best["_rank"], best["ts"]):
             best = {"_rank": rank, "mint": mint, "ts": ts, "stage": stage, "detail": detail}
     for r in c.execute("SELECT mint,ts,status,size_usd FROM signals WHERE ts>=?", (start,)):
@@ -179,7 +182,7 @@ def best_candidate(c, s, start):
         else: consider(2 + n / 10, m, d["ts"], f"Audit {n}/8", ("refused · " + d["reason"]) if d["reason"] else "taking apart...")
     for r in c.execute("SELECT mint,MAX(ts) ts,MAX(liquidity_usd) liq FROM scans WHERE ts>=? AND verdict='pass' GROUP BY mint", (start,)):
         consider(1.5, r["mint"], r["ts"], "Scanner pass", f"liq ${(r['liq'] or 0) / 1000:.1f}K")
-    if best is None:
+    if best is None and not clean:
         r = c.execute("SELECT mint,ts,liquidity_usd,reason FROM scans WHERE ts>=? AND liquidity_usd IS NOT NULL "
                       "ORDER BY liquidity_usd DESC, id DESC LIMIT 1", (start,)).fetchone()
         if r: consider(0, r["mint"], r["ts"], "Closest call", f"liq ${(r['liquidity_usd'] or 0) / 1000:.1f}K · killed: {r['reason'] or 'n/a'}")

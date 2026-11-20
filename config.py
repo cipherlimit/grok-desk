@@ -62,6 +62,7 @@ SPEC = {
     "scanner.min_pool_age_min": (10, 0, 240, "scanner", ["pool age"]),
     "scanner.max_wait_min": (60, 5, 720, "scanner", ["max wait"]),
     "scanner.runner_h24_pct": (300, 10, 100_000, "scanner", ["runner"]),
+    "scanner.min_volume_h24_usd": (25_000, 0, 10_000_000, "scanner", ["min volume", "volume"]),  # h24 if present, else h1; 0 = off
     "scanner.judge_from_age_min": (10, 0, 240, "scanner", ["judge from"]),       # user 2026-11-16
     "scanner.dex_max_rpm": (250, 10, 300, "scanner", []),
     "scanner.ws_silent_s": (120, 30, 3600, "scanner", []),   # Scanner prompt: closed or silent for [120]s -> reconnect
@@ -76,6 +77,7 @@ SPEC = {
     "auditor.min_pool_age_min": (10, 0, 240, "auditor", []),
     "auditor.max_bundled": (5, 1, 1000, "auditor", ["bundled", "max bundled"]),
     "auditor.max_delegated_accounts": (10, 1, 10_000, "auditor", ["delegations", "delegated"]),
+    "auditor.min_holders": (100, 0, 100_000, "auditor", ["min holders", "holders"]),  # unknown count is red; 0 still fails unknown
     "auditor.retries": (3, 1, 10, "auditor", ["retries"]),
     "auditor.retry_gap_s": (2, 0, 60, "auditor", []),
     # analyst
@@ -135,6 +137,7 @@ SPEC = {
     # feed (user 2026-11-18): every desk event to Telegram; good_liq 0 = follow scanner.min_liquidity_usd
     "feed.enabled": (True, None, None, "desk", ["feed"]),
     "feed.good_liq_usd": (0, 0, 10_000_000, "desk", ["good liq", "good liquidity"]),
+    "feed.only_clean": (True, None, None, "desk", ["only clean", "clean only"]),  # user 2026-11-20: hide unsafe/unfinished coins from Telegram
     # chains (user 2026-11-18): BNB Chain next to Solana. Default solana = deploying changes nothing; Telegram "bnb on" / "bnb off"
     "chains.enabled": ("solana", ["solana", "bnb", "solana,bnb"], None, "desk", ["chains"]),
     "scanner.bnb_poll_s": (60, 30, 600, "scanner", ["bnb poll"]),            # GeckoTerminal new BSC pools, free tier

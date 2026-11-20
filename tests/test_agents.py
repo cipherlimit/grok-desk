@@ -102,7 +102,8 @@ def test_scanner_pika_raw_is_killed_on_liquidity(conn):
 
 def test_scanner_pass_once_and_never_twice(conn):
     conn.execute("INSERT INTO coins(mint,migrated_at) VALUES(?,?)", (PIKA, ago(30)))
-    pair = pika_pair(liquidity__usd=55_000.0, priceChange__h1=12.0, pairCreatedAt=int((time.time() - 1800) * 1000))
+    pair = pika_pair(liquidity__usd=55_000.0, priceChange__h1=12.0, volume__h24=80_000.0, volume__h1=80_000.0,
+                     pairCreatedAt=int((time.time() - 1800) * 1000))
     bus = Bus(); sc = scanner.Scanner(conn, bus, FakeSrc(dex=[pair], **_rpc_ok()))
     run(sc.cycle())
     out = bus.queues["auditor"].get_nowait()
@@ -180,9 +181,11 @@ def test_l8_delegations_raw_and_drain():
     ok, v, h = auditor.l8_delegations(drain, 10)
     assert (ok, v) == (False, "12 wallets → 9fQx...T2a")
 
-def _audit_src(graph):
+def _audit_src(graph, report=None):
+    if report is None:
+        report = copy.deepcopy(raw("rugcheck_report.json")); report["risks"] = []  # clean report so later layers are reached
     return FakeSrc(getAccountInfo=raw("rpc_getaccountinfo.json"), getTokenSupply=raw("rpc_gettokensupply.json"),
-                   getTokenAccountsByOwner={"result": {"value": []}}, report=raw("rugcheck_report.json"),
+                   getTokenAccountsByOwner={"result": {"value": []}}, report=report,
                    dex=[pika_pair(liquidity__usd=50_000.0)], graph=graph,
                    getProgramAccounts=raw("rpc_getprogramaccounts_token2022.json"), **{k: v for k, v in _rpc_ok().items() if k != "getTokenSupply"})
 
@@ -207,6 +210,7 @@ def test_audit_pika_empty_graph_red_at_layer7(conn, sleeps):
     assert run(auditor.Auditor(conn, bus, _audit_src([])).audit(_scan_msg())) is None
 
 def test_audit_8_of_8_passes_to_analyst(conn):
+    db.set_setting(conn, "auditor.min_holders", 30, who="test")  # GPA fixture has 36 holders
     _coin(conn); bus = Bus()
     g = raw("insiders_probe/graph_WIGGLES_2kWx47CUrcXtzptFNnbSXKq3vo1ebqyLBhRytKRGpump.json")
     out = run(auditor.Auditor(conn, bus, _audit_src(g)).audit(_scan_msg()))

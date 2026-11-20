@@ -8,7 +8,8 @@ from test_telegram import D
 def _hb(conn):
     for a in feed.HB_AGENTS: db.heartbeat(conn, a)
 
-def F(conn, tmp_path):
+def F(conn, tmp_path, only_clean=False):
+    db.set_setting(conn, "feed.only_clean", only_clean, who="test")
     _hb(conn); return feed.Feed(conn, tmp_path / "feed_state.json")
 
 def _scan(conn, liq, verdict="kill", reason="liq $9.0K"):
@@ -50,11 +51,20 @@ def test_good_liquidity_alert_uses_scanner_min_and_links(conn, tmp_path):
     assert feed.good_liq_usd(s) == s["scanner.min_liquidity_usd"] == 40_000
     _scan(conn, 45_000, "pass", None)
     f.collect(True, db.settings_all(conn))
+    assert not [o for o in f.st["outbox"] if o["a"]]          # scanner pass alone is not a clean alert
+    # full clear: all auditor layers green + analyst pass
+    for n, name in enumerate(["Mint authority", "Freeze authority", "Dev wallet", "Top 10 holders",
+                              "Liquidity", "Pool age", "Bundled wallets", "Delegations"], 1):
+        conn.execute("INSERT INTO audits(mint,ts,layer,name,value_text,pass,source) VALUES(?,?,?,?,?,?,?)",
+                     (PIKA, ago(0), n, name, "ok", 1, "rpc"))
+    conn.execute("INSERT INTO verdicts(mint,ts,score,pass,reason) VALUES(?,?,?,?,?)", (PIKA, ago(0), 82, 1, None))
+    f.collect(True, db.settings_all(conn))
     alert = [o for o in f.st["outbox"] if o["a"]]
     assert len(alert) == 1
     a = alert[0]["t"]
-    assert a.startswith("🟢 GOOD LIQUIDITY · PIKA COIN") and links.coin_url(PIKA, "solana") in a and "r=savipww" in a
+    assert a.startswith("🟢 CLEAN · PIKA COIN") and links.coin_url(PIKA, "solana") in a and "r=savipww" in a
     assert f"https://dexscreener.com/solana/{PIKA}" in a and "buy" not in a.lower() and "your OK" in a
+    assert "Auditor all green" in a and "Analyst 82" in a
     assert alert[0]["u"] == links.coin_url(PIKA, "solana")
     _scan(conn, 50_000, "pass", None); f.collect(True, db.settings_all(conn))
     assert sum(o["a"] for o in f.st["outbox"]) == 1          # once per coin

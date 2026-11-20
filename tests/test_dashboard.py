@@ -13,7 +13,7 @@ def test_empty_desk_has_no_fake_numbers(tmp_path):
     assert [m["agent"] for m in st["messages"]] == ["grokbot", "risk", "executor", "analyst", "auditor", "scanner"]
 
 def test_closest_call_and_bnb_chain(tmp_path):
-    c = _db(tmp_path); now = db.now_iso(); bnb = "0x" + "cd" * 20
+    c = _db(tmp_path); db.set_setting(c, "feed.only_clean", False, who="test"); now = db.now_iso(); bnb = "0x" + "cd" * 20
     for m, liq in (("So1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaapump", 9000), (bnb, 21800)):
         c.execute("INSERT INTO scans(mint,ts,liquidity_usd,verdict,reason) VALUES(?,?,?,?,?)", (m, now, liq, "kill", "liq low"))
     c.commit()
@@ -33,3 +33,22 @@ def test_signal_beats_scanner_pass(tmp_path):
     st = api.state_doc(c, db.settings_all(c))
     assert st["best"]["mint"] == m2 and st["best"]["stage"] == "Signal"
     assert st["signal"]["mode"] == "PAPER" and st["signal"]["coin_url"] == links.coin_url(m2)
+
+def test_only_clean_hides_closest_call(tmp_path):
+    c = _db(tmp_path); now = db.now_iso()
+    c.execute("INSERT INTO scans(mint,ts,liquidity_usd,verdict,reason) VALUES(?,?,?,?,?)",
+              ("So1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaapump", now, 9000, "kill", "liq low"))
+    c.commit()
+    assert db.settings_all(c)["feed.only_clean"] is True
+    st = api.state_doc(c, db.settings_all(c))
+    assert st["best"] is None and st["today"]["killed"] == 1
+    # a fully cleared coin (analyst pass) is shown
+    m = "B" * 40 + "pump"
+    c.execute("INSERT INTO scans(mint,ts,liquidity_usd,verdict) VALUES(?,?,?,?)", (m, now, 50000, "pass"))
+    for n in range(1, 9):
+        c.execute("INSERT INTO audits(mint,ts,layer,name,value_text,pass,source) VALUES(?,?,?,?,?,?,?)",
+                  (m, now, n, "L", "ok", 1, "rpc"))
+    c.execute("INSERT INTO verdicts(mint,ts,score,pass,reason) VALUES(?,?,?,?,?)", (m, now, 80, 1, None))
+    c.commit()
+    st = api.state_doc(c, db.settings_all(c))
+    assert st["best"]["mint"] == m and st["best"]["stage"] == "Analyst pass"

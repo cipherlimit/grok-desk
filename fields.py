@@ -32,7 +32,7 @@ RUG = {
     "creator": "creator", "creator_balance": "creatorBalance",
     "mint_authority": "mintAuthority", "freeze_authority": "freezeAuthority",
     "supply": "token.supply", "decimals": "token.decimals", "token_program": "tokenProgram",
-    "total_holders": "totalHolders", "graph_insiders": "graphInsidersDetected",
+    "total_holders": "totalHolders", "risks": "risks", "graph_insiders": "graphInsidersDetected",
     "insider_networks": "insiderNetworks", "top_holders": "topHolders",
 }
 RUG_MARKET_POOL_KEY = "pubkey"          # match DexScreener pairAddress; there is no markets[].pool

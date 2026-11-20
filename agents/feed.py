@@ -48,6 +48,23 @@ def good_liq_usd(s: dict, mint=None) -> float:
             return max(base, bnb_bar)
     return base
 
+def only_clean(s: dict) -> bool:
+    """Default on: Telegram only gets coins that cleared every check (and system events)."""
+    v = s.get("feed.only_clean")
+    return True if v is None else bool(v)
+
+def coin_cleared(c, mint) -> bool:
+    """Scanner pass + every auditor layer green + analyst pass, tonight."""
+    start, _ = db.night_bounds()
+    if not c.execute("SELECT 1 FROM scans WHERE mint=? AND ts>=? AND verdict='pass'", (mint, start)).fetchone():
+        return False
+    if not c.execute("SELECT 1 FROM audits WHERE mint=? AND ts>=?", (mint, start)).fetchone():
+        return False
+    if c.execute("SELECT 1 FROM audits WHERE mint=? AND ts>=? AND pass=0", (mint, start)).fetchone():
+        return False
+    row = c.execute("SELECT pass FROM verdicts WHERE mint=? AND ts>=? ORDER BY id DESC LIMIT 1", (mint, start)).fetchone()
+    return bool(row and row["pass"])
+
 class Feed:
     def __init__(self, conn, state_path=None):
         self.c, self.path = conn, state_path or STATE
@@ -98,36 +115,33 @@ class Feed:
     def collect(self, enabled: bool, s: dict):
         """Move every new event after the cursor into the outbox (or drop it when muted), advance the cursor."""
         cur = self.st["cur"]; ev = []          # (text, url, alone)
+        clean = only_clean(s)
         for r in self.c.execute("SELECT rowid AS rid, * FROM coins WHERE rowid>? ORDER BY rowid", (cur["coins"],)):
             cur["coins"] = r["rid"]
+            if clean: continue
             bnb = " · BNB Chain (PancakeSwap)" if r["chain"] == chains.BNB else ""
             ev.append((f"🆕 New coin graduated · {r['name'] or r['symbol'] or 'unnamed'} · {r['mint']}{bnb}", None, False))
         for r in self.c.execute("SELECT * FROM scans WHERE id>? ORDER BY id", (cur["scans"],)):
             cur["scans"] = r["id"]
+            if clean: continue
             nm = self.name(r["mint"])
             icon = "✅ PASS" if r["verdict"] == "pass" else "❌ KILL"
             age = f"{r['age_min']:.0f}m" if r["age_min"] is not None else "?"
             ev.append((f"🔎 Scanner {icon} · {nm} · liq {k(r['liquidity_usd'])} · top10 {pct(r['top10_pct'])} · "
                        f"1h {pct(r['h1_change_pct'], True)} · age {age}" + (f" · {r['reason']}" if r["reason"] else "")
                        + f"\n{r['mint']}", None, False))
-            liq = r["liquidity_usd"]
-            thr = good_liq_usd(s, r["mint"])
-            if liq is not None and liq >= thr and r["mint"] not in self.st["alerted"]:
-                self.st["alerted"] = (self.st["alerted"] + [r["mint"]])[-500:]
-                url = links.coin_url(r["mint"])
-                ev.append((f"🟢 GOOD LIQUIDITY · {nm}{' · BNB Chain' if chains.is_evm(r['mint']) else ''}\n"
-                           f"liq {k(liq)} (threshold {k(thr)}) · top10 {pct(r['top10_pct'])} · 1h {pct(r['h1_change_pct'], True)} · age {age}\n"
-                           f"Scanner: {r['verdict']}" + (f" ({r['reason']})" if r["reason"] else "") + "\n"
-                           f"Info only, not a signal: a trade still needs every agent to pass and your OK.\n"
-                           f"FOMO: {url}\nDexScreener: {chains.dexscreener_url(r['mint'])}\n{r['mint']}", url, True))
         for r in self.c.execute("SELECT * FROM audits WHERE id>? ORDER BY id", (cur["audits"],)):
             cur["audits"] = r["id"]
+            if clean: continue
             ev.append((f"🛡 Auditor L{r['layer']} {r['name']} {'pass' if r['pass'] else 'FAIL'} · {self.name(r['mint'])} · "
                        f"{r['value_text']} ({r['source']})", None, False))
         for r in self.c.execute("SELECT * FROM verdicts WHERE id>? ORDER BY id", (cur["verdicts"],)):
             cur["verdicts"] = r["id"]
-            ev.append((f"🧠 Analyst {'PASS' if r['pass'] else 'REJECT'} · {self.name(r['mint'])} · score {r['score']}"
-                       + (f" · {r['reason']}" if r["reason"] else ""), None, False))
+            if r["pass"]:
+                ev += self._clean_alert(s, r)
+            elif not clean:
+                ev.append((f"🧠 Analyst REJECT · {self.name(r['mint'])} · score {r['score']}"
+                           + (f" · {r['reason']}" if r["reason"] else ""), None, False))
         for r in self.c.execute("SELECT * FROM signals WHERE id>? ORDER BY id", (cur["signals"],)):
             cur["signals"] = r["id"]
             self.st["sig"][str(r["id"])] = r["status"]
@@ -148,6 +162,8 @@ class Feed:
         ev += self._risk_changes()
         for r in self.c.execute("SELECT * FROM activity WHERE id>? ORDER BY id", (cur["activity"],)):
             cur["activity"] = r["id"]
+            if clean and r["kind"] == "rejected":
+                continue
             ev.append((f"📋 {r['agent'] or 'desk'} · {r['kind']} · {r['title'] or ''}"
                        + (f" · {r['subtitle']}" if r["subtitle"] else "") + (f" · {r['value']}" if r["value"] else ""), None, False))
         for r in self.c.execute("SELECT rowid AS rid, * FROM change_log WHERE rowid>? ORDER BY rowid", (cur["change_log"],)):
@@ -160,6 +176,29 @@ class Feed:
         elif ev:
             log.info("muted: %d events not sent", len(ev))
         return len(ev)
+
+    def _clean_alert(self, s, verdict):
+        """Fire once a coin has passed Scanner + Auditor + Analyst (not on Scanner pass alone)."""
+        mint = verdict["mint"]
+        if mint in self.st["alerted"] or not coin_cleared(self.c, mint):
+            return []
+        self.st["alerted"] = (self.st["alerted"] + [mint])[-500:]
+        scan = self.c.execute("SELECT * FROM scans WHERE mint=? AND verdict='pass' ORDER BY id DESC LIMIT 1", (mint,)).fetchone()
+        nm = self.name(mint)
+        liq = scan["liquidity_usd"] if scan else None
+        thr = good_liq_usd(s, mint)
+        age = f"{scan['age_min']:.0f}m" if scan and scan["age_min"] is not None else "?"
+        top10 = pct(scan["top10_pct"]) if scan else "?"
+        h1 = pct(scan["h1_change_pct"], True) if scan else "?"
+        url = links.coin_url(mint)
+        bnb = " · BNB Chain" if chains.is_evm(mint) else ""
+        text = (f"🟢 CLEAN · {nm}{bnb}\n"
+                f"liq {k(liq)} (threshold {k(thr)}) · top10 {top10} · 1h {h1} · age {age}\n"
+                f"Scanner pass · Auditor all green · Analyst {verdict['score']}"
+                + (f" · {verdict['reason']}" if verdict["reason"] else "") + "\n"
+                f"Info only, not a signal: a trade still needs your OK.\n"
+                f"FOMO: {url}\nDexScreener: {chains.dexscreener_url(mint)}\n{mint}")
+        return [(text, url, True)]
 
     @staticmethod
     def _pos_snap(r):

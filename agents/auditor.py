@@ -97,6 +97,27 @@ def l8_delegations(accounts: list[dict], max_n: int) -> tuple[bool, str, int]:
         return True, f"{n} wallets → {d[:4]}...{d[-3:]}", holders
     return True, "None", holders
 
+
+def l_rug_risks(report: dict) -> tuple[bool, str] | None:
+    """If RugCheck included a risks list, fail on any item with level 'danger'. None = no list, skip."""
+    if not isinstance(report, dict) or "risks" not in report:
+        return None
+    names = []
+    for r in report.get("risks") or []:
+        if isinstance(r, dict) and str(r.get("level") or "").lower() == "danger":
+            names.append(r.get("name") or r.get("description") or "danger")
+    if names:
+        return False, f"rugcheck danger: {names[0]}"
+    return True, "no danger risks"
+
+def holders_ok(holders, min_holders) -> tuple[bool, str]:
+    """Fail if the count is unknown (strict) or below auditor.min_holders."""
+    if holders is None:
+        return False, "no data: holders"
+    if min_holders and holders < min_holders:
+        return False, f"holders {holders}"
+    return True, f"{holders} holders"
+
 # ---------- the agent ----------
 class Auditor:
     def __init__(self, conn, bus, src):
@@ -147,6 +168,9 @@ class Auditor:
                 return l4_top10(pct, s["auditor.max_top10_pct"]) + ("rpc",)
             if n == 5:
                 rep = await get("report", lambda: self.src.rug_report(mint))
+                risk = l_rug_risks(rep)
+                if risk is not None and not risk[0]:
+                    return risk[0], risk[1], "rugcheck"
                 pairs = await get("dex", lambda: self.src.dex_tokens([mint]))
                 pair = onchain.best_pumpswap_pair(pairs, mint)
                 liq_now = fields.dig(pair, "liquidity.usd") if pair else None
@@ -186,6 +210,15 @@ class Auditor:
                            (mint, ts, n, LAYERS[n], value, int(ok), source))     # emitted the moment it finishes
             log.info("mint=%s layer=%d %s value=%r ms=%d %s", mint, n, LAYERS[n], value, ms, "ok" if ok else "RED")
             if not ok: reason = value; break
+        if reason is None:
+            ok_h, v_h = holders_ok(cache.get("holders"), s.get("auditor.min_holders") or 0)
+            if not ok_h:
+                ts = db.now_iso()
+                layers.append({"n": 9, "name": "Holders", "pass": False, "value": v_h, "source": "rpc"})
+                self.c.execute("INSERT INTO audits(mint,ts,layer,name,value_text,pass,source) VALUES(?,?,?,?,?,?,?)",
+                               (mint, ts, 9, "Holders", v_h, 0, "rpc"))
+                log.info("mint=%s layer=%d Holders value=%r RED", mint, 9, v_h)
+                reason = v_h
         passed = reason is None
         out = {"agent": "auditor", "mint": mint, "ts": db.now_iso(), "passed": passed, "layersChecked": len(layers),
                "layers": layers, "holders": cache.get("holders"), "reason": reason}
@@ -228,6 +261,11 @@ class Auditor:
         holders = sum(1 for a, v in (led.get("bal") or {}).items() if v > 0 and a not in pools and a not in bsc.NOT_HOLDERS) \
             if led.get("complete") else None                     # live count from the Transfer-log replay (GoPlus lags)
         if holders is not None: self.c.execute("UPDATE coins SET holders=? WHERE mint=?", (holders, mint))
+        if reason is None:
+            ok_h, v_h = holders_ok(holders, s.get("auditor.min_holders") or 0)
+            if not ok_h:
+                reason = v_h
+                layers.append({"n": 9, "name": "Holders", "pass": False, "value": v_h, "source": "bsc rpc"})
         if gp and gp.get("creator_address") and coin and not coin["creator"]:
             self.c.execute("UPDATE coins SET creator=? WHERE mint=?", (chains.norm(gp["creator_address"]), mint))
         for l in layers:

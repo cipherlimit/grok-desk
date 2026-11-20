@@ -93,6 +93,7 @@ def l1_honeypot(gp: dict | None, hp: dict | None) -> tuple[bool, str]:
         if flag(gp, "cannot_sell_all") == "1": return False, "can't sell all"
         if flag(gp, "cannot_buy") == "1": return False, "can't buy"
         if flag(gp, "honeypot_with_same_creator") == "1": return False, "creator made honeypots"
+        if flag(gp, "is_airdrop_scam") == "1": return False, "airdrop scam"
     hp_pass = hp_ok(hp) and hp.get("simulationSuccess") is True
     gp_pass = bool(gp) and flag(gp, "is_honeypot") == "0"
     if not hp_pass and not gp_pass: raise NoData

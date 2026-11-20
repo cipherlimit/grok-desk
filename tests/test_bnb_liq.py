@@ -38,8 +38,8 @@ def test_bnb_bar_kills_50k_passes_120k_solana_15k_passes(conn):
 
 
 def test_feed_does_not_announce_bnb_under_bnb_bar(conn, tmp_path):
-    """A BNB scan at $50K must not get a GOOD LIQUIDITY alert when the BNB bar is $100K,
-    even if feed.good_liq_usd / the Solana bar is $10K. $120K BNB does alert."""
+    """A BNB coin under the $100K bar never gets a clean alert, even if feed.good_liq_usd is $10K.
+    A $120K BNB coin alerts only after Auditor + Analyst also pass, and the threshold shown is $100K."""
     db.set_setting(conn, "scanner.min_liquidity_usd", 10_000, who="test")
     db.set_setting(conn, "scanner.bnb_min_liquidity_usd", 100_000, who="test")
     db.set_setting(conn, "feed.good_liq_usd", 10_000, who="test")
@@ -60,7 +60,7 @@ def test_feed_does_not_announce_bnb_under_bnb_bar(conn, tmp_path):
     )
     f.collect(True, db.settings_all(conn))
     t = "\n".join(texts(f))
-    assert "GOOD LIQUIDITY" not in t
+    assert "CLEAN" not in t and "GOOD LIQUIDITY" not in t
     assert "Scanner ❌ KILL" in t
 
     conn.execute(
@@ -69,7 +69,13 @@ def test_feed_does_not_announce_bnb_under_bnb_bar(conn, tmp_path):
         (BEA, ago(0), 120_000, 20, 12, 15, "pass", None, "bnb"),
     )
     f.collect(True, db.settings_all(conn))
+    assert not [o for o in f.st["outbox"] if o["a"]]   # scanner pass alone is not a clean alert
+    for n in range(1, 9):
+        conn.execute("INSERT INTO audits(mint,ts,layer,name,value_text,pass,source,chain) VALUES(?,?,?,?,?,?,?,?)",
+                     (BEA, ago(0), n, "L", "ok", 1, "goplus", "bnb"))
+    conn.execute("INSERT INTO verdicts(mint,ts,score,pass,reason) VALUES(?,?,?,?,?)", (BEA, ago(0), 80, 1, None))
+    f.collect(True, db.settings_all(conn))
     alerts = [o for o in f.st["outbox"] if o["a"]]
     assert len(alerts) == 1
-    assert "GOOD LIQUIDITY · BEA · BNB Chain" in alerts[0]["t"]
+    assert "CLEAN · BEA · BNB Chain" in alerts[0]["t"]
     assert "liq $120.0K (threshold $100.0K)" in alerts[0]["t"]

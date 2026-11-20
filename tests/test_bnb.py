@@ -35,9 +35,15 @@ def bea_pair(**kw):
     p.update(kw); return p
 ST = lambda: {**__import__("config").DEFAULTS}
 
+class _Holders(dict):
+    """Fake ledgers.st: any mint looks complete with 200 holders (above auditor.min_holders=100)."""
+    def get(self, mint, default=None):
+        if mint in self: return dict.get(self, mint, default)
+        return {"complete": True, "bal": {f"0x{i:040x}": 1 for i in range(1, 201)}}
+
 class FakeLedgers:
     def __init__(self, top10=8.0, dev=0.5, lp=(100.0, 0.0)):
-        self.v = {"top10": top10, "dev": dev, "lp": lp}; self.st = {}
+        self.v = {"top10": top10, "dev": dev, "lp": lp}; self.st = _Holders()
     async def _get(self, k):
         v = self.v[k]
         if isinstance(v, Exception): raise v
@@ -369,6 +375,7 @@ def test_telegram_bnb_on_off(conn):
 
 def test_feed_bnb_lines(conn, tmp_path):
     db.set_setting(conn, "scanner.bnb_min_liquidity_usd", 0)  # follow the global bar; $100K BNB bar is tested in test_bnb_liq
+    db.set_setting(conn, "feed.only_clean", False, who="test")
     for a in feed.HB_AGENTS: db.heartbeat(conn, a)
     f = feed.Feed(conn, tmp_path / "fs.json"); f.start("PAPER"); f.st["outbox"] = []
     _bnb_coin(conn)
@@ -377,6 +384,12 @@ def test_feed_bnb_lines(conn, tmp_path):
     f.collect(True, S(conn))
     t = [o["t"] for o in f.st["outbox"]]
     assert any(x.startswith("🆕 New coin graduated · 💯Bear") and x.endswith("BNB Chain (PancakeSwap)") for x in t)
+    assert not [o for o in f.st["outbox"] if o["a"]]
+    for n in range(1, 9):
+        conn.execute("INSERT INTO audits(mint,ts,layer,name,value_text,pass,source,chain) VALUES(?,?,?,?,?,?,?,?)",
+                     (BEA, ago(0), n, "L", "ok", 1, "goplus", "bnb"))
+    conn.execute("INSERT INTO verdicts(mint,ts,score,pass,reason) VALUES(?,?,?,?,?)", (BEA, ago(0), 80, 1, None))
+    f.collect(True, S(conn))
     alert = [o for o in f.st["outbox"] if o["a"]][0]
-    assert alert["t"].startswith("🟢 GOOD LIQUIDITY · 💯Bear · BNB Chain") and f"https://dexscreener.com/bsc/{BEA}" in alert["t"]
+    assert alert["t"].startswith("🟢 CLEAN · 💯Bear · BNB Chain") and f"https://dexscreener.com/bsc/{BEA}" in alert["t"]
     assert alert["u"] == links.coin_url(BEA)
