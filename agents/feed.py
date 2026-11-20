@@ -37,11 +37,16 @@ def hhmm(iso):
     try: return db.local_hhmm(iso)
     except Exception: return "--:--"
 
-def good_liq_usd(s: dict) -> float:
-    """feed.good_liq_usd if set (>0); else the Scanner's minimum liquidity; else $20K."""
+def good_liq_usd(s: dict, mint=None) -> float:
+    """feed.good_liq_usd if set (>0); else the Scanner's minimum liquidity; else $20K.
+    For a BNB mint, never below scanner.bnb_min_liquidity_usd when that bar is >0."""
     v = s.get("feed.good_liq_usd") or 0
-    if v and v > 0: return float(v)
-    return float(s.get("scanner.min_liquidity_usd") or DEFAULT_GOOD_LIQ)
+    base = float(v) if v and v > 0 else float(s.get("scanner.min_liquidity_usd") or DEFAULT_GOOD_LIQ)
+    if mint and chains.is_evm(mint):
+        bnb_bar = float(s.get("scanner.bnb_min_liquidity_usd") or 0)
+        if bnb_bar > 0:
+            return max(base, bnb_bar)
+    return base
 
 class Feed:
     def __init__(self, conn, state_path=None):
@@ -97,7 +102,6 @@ class Feed:
             cur["coins"] = r["rid"]
             bnb = " · BNB Chain (PancakeSwap)" if r["chain"] == chains.BNB else ""
             ev.append((f"🆕 New coin graduated · {r['name'] or r['symbol'] or 'unnamed'} · {r['mint']}{bnb}", None, False))
-        thr = good_liq_usd(s)
         for r in self.c.execute("SELECT * FROM scans WHERE id>? ORDER BY id", (cur["scans"],)):
             cur["scans"] = r["id"]
             nm = self.name(r["mint"])
@@ -107,6 +111,7 @@ class Feed:
                        f"1h {pct(r['h1_change_pct'], True)} · age {age}" + (f" · {r['reason']}" if r["reason"] else "")
                        + f"\n{r['mint']}", None, False))
             liq = r["liquidity_usd"]
+            thr = good_liq_usd(s, r["mint"])
             if liq is not None and liq >= thr and r["mint"] not in self.st["alerted"]:
                 self.st["alerted"] = (self.st["alerted"] + [r["mint"]])[-500:]
                 url = links.coin_url(r["mint"])

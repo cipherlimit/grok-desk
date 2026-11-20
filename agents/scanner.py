@@ -31,12 +31,21 @@ def fmt_k(usd: float) -> str:
     if usd >= 1_000: return f"${usd/1_000:.1f}K"
     return f"${usd:.0f}"
 
-def decide(s: dict, liq, top10_fn_result, h1, copycat, age_min) -> tuple[str | None, str | None, bool]:
+def min_liq_usd(s: dict, chain=None) -> float:
+    """BNB uses scanner.bnb_min_liquidity_usd when that bar is >0; 0 (and any other chain) follows the global bar."""
+    if chain == chains.BNB:
+        v = s.get("scanner.bnb_min_liquidity_usd") or 0
+        if v > 0:
+            return float(v)
+    return float(s["scanner.min_liquidity_usd"])
+
+def decide(s: dict, liq, top10_fn_result, h1, copycat, age_min, chain=None) -> tuple[str | None, str | None, bool]:
     """Pure kill/pass logic in spec order. top10_fn_result: float, or None = unknown (wait).
     Returns (verdict, reason, needs_top10) ; verdict None = keep waiting.
-    User rule 2026-11-16: no kill is judged before pool age >= [10] min (scanner.judge_from_age_min)."""
+    User rule 2026-11-16: no kill is judged before pool age >= [10] min (scanner.judge_from_age_min).
+    chain: 'bnb' uses the BNB-only liquidity bar when set; omitted/other = scanner.min_liquidity_usd."""
     if age_min < s["scanner.judge_from_age_min"]: return None, None, False
-    if liq < s["scanner.min_liquidity_usd"]: return "kill", f"liq {fmt_k(liq)}", False
+    if liq < min_liq_usd(s, chain): return "kill", f"liq {fmt_k(liq)}", False
     if top10_fn_result is None: return None, None, True
     if top10_fn_result > s["scanner.max_top10_pct"]: return "kill", f"top 10 hold {top10_fn_result:.0f}%", False
     if h1 is not None and h1 > s["scanner.max_h1_change_pct"]: return "kill", f"+{h1:.0f}% in 1h", False
@@ -161,7 +170,7 @@ class Scanner:
             return
         age_min = int((now * 1000 - (d["pair_created_ms"] or now * 1000)) / 60000)
         top10 = None
-        verdict, reason, need = decide(s, liq, None, d["chg_h1"], None, age_min)
+        verdict, reason, need = decide(s, liq, None, d["chg_h1"], None, age_min, chain)
         if need and chain == chains.BNB:
             pools = {chains.norm(p.get("pairAddress")) for p in pairs if chains.same(fields.dig(p, "baseToken.address"), mint)}
             try: top10 = await bsc.ledgers_for(self.src).top10_pct(mint, pools)   # Transfer-log replay, pools/burn dropped
@@ -175,7 +184,7 @@ class Scanner:
                 log.warning("top10 read failed mint=%s (%s), waiting", mint, e)
         if need:
             cc = copycat_of(d["name"], d["symbol"], mint, self.runners)
-            verdict, reason, _ = decide(s, liq, top10, d["chg_h1"], cc, age_min)
+            verdict, reason, _ = decide(s, liq, top10, d["chg_h1"], cc, age_min, chain)
         if verdict is None and in_room_min >= s["scanner.max_wait_min"]:
             verdict, reason = "kill", "never qualified"
         if verdict: self.emit(row, d, liq, top10, age_min, verdict, reason)

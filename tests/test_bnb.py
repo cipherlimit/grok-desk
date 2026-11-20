@@ -133,6 +133,7 @@ def test_scanner_judges_bnb_coin_with_rpc_top10(conn, monkeypatch):
     conn.execute("INSERT INTO coins(mint,symbol,pool,migrated_at,chain) VALUES(?,?,?,?,?)", (BEA, "BEA", BEA_POOL, ago(30), "bnb"))
     monkeypatch.setattr(bsc, "ledgers_for", lambda src: FakeLedgers(top10=12.5))
     db.set_setting(conn, "scanner.min_liquidity_usd", 10_000)
+    db.set_setting(conn, "scanner.bnb_min_liquidity_usd", 0)  # follow the global bar; $100K BNB bar is tested in test_bnb_liq
     bus = Bus()
     run(scanner.Scanner(conn, bus, FakeSrc(dex=[bea_pair()])).cycle())
     out = bus.queues["auditor"].get_nowait()
@@ -367,6 +368,7 @@ def test_telegram_bnb_on_off(conn):
     assert "bnb on" in run(d.handle("help"))[0]
 
 def test_feed_bnb_lines(conn, tmp_path):
+    db.set_setting(conn, "scanner.bnb_min_liquidity_usd", 0)  # follow the global bar; $100K BNB bar is tested in test_bnb_liq
     for a in feed.HB_AGENTS: db.heartbeat(conn, a)
     f = feed.Feed(conn, tmp_path / "fs.json"); f.start("PAPER"); f.st["outbox"] = []
     _bnb_coin(conn)

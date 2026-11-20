@@ -138,6 +138,7 @@ SPEC = {
     # chains (user 2026-11-18): BNB Chain next to Solana. Default solana = deploying changes nothing; Telegram "bnb on" / "bnb off"
     "chains.enabled": ("solana", ["solana", "bnb", "solana,bnb"], None, "desk", ["chains"]),
     "scanner.bnb_poll_s": (60, 30, 600, "scanner", ["bnb poll"]),            # GeckoTerminal new BSC pools, free tier
+    "scanner.bnb_min_liquidity_usd": (100_000, 0, 10_000_000, "scanner", ["bnb min liq", "bnb liquidity"]),  # 0 = follow scanner.min_liquidity_usd
     "auditor.bnb_max_tax_pct": (10, 0, 100, "auditor", ["max tax", "bnb tax"]),   # buy AND sell tax must be under this
     "auditor.bnb_require_renounced": (True, None, None, "auditor", ["renounced"]),  # owner must be renounced (0x0 / dead)
 }
